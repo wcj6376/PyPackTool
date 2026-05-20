@@ -15,6 +15,7 @@ import tkinter as tk
 import warnings
 from collections import Counter
 import ctypes
+import fnmatch
 from typing import Optional
 from tkinter import filedialog, messagebox, ttk
 
@@ -59,6 +60,31 @@ class ExePathManager:
             hasattr(sys, '_MEI_ARCHIVE'),  # PyInstaller
             getattr(sys, 'nuitka_is_frozen', False),  # Nuitka
         ]
+        
+        # 增强检测：Nuitka 打包后 sys.frozen 可能为 False
+        if not any(frozen_flags):
+            # 方法1: 检查 sys.argv[0] 是否以 .exe 结尾
+            if sys.argv[0].lower().endswith('.exe'):
+                return True
+            # 方法2: 检查 sys.executable 是否在临时目录
+            if 'temp' in sys.executable.lower() or 'onefile' in sys.executable.lower():
+                return True
+            # 方法3: 使用 Windows API 获取当前进程名
+            if sys.platform == 'win32':
+                try:
+                    import ctypes
+                    buffer = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+                    ctypes.windll.kernel32.GetModuleFileNameW(
+                        ctypes.wintypes.HMODULE(0),
+                        buffer,
+                        ctypes.wintypes.MAX_PATH
+                    )
+                    exe_path = buffer.value
+                    if exe_path.lower().endswith('.exe'):
+                        return True
+                except:
+                    pass
+        
         return any(frozen_flags)
 
     @staticmethod
@@ -73,60 +99,45 @@ class ExePathManager:
 
         # 打包环境：优先使用Windows API获取真实路径
         try:
-            # 方法1: GetModuleFileNameW (Windows API，最可靠)
             buffer = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
             ctypes.windll.kernel32.GetModuleFileNameW(
-                ctypes.wintypes.HMODULE(0),  # NULL表示当前进程
+                ctypes.wintypes.HMODULE(0),
                 buffer,
                 ctypes.wintypes.MAX_PATH
             )
             real_path = buffer.value
-
-            # 验证路径有效性
             if os.path.exists(real_path) and os.path.isfile(real_path):
                 return real_path
-
-        except Exception as e:
+        except:
             pass
 
-        # 方法2: 回退到sys.argv[0]
+        # 回退到 sys.argv[0]
         try:
             if len(sys.argv) > 0:
                 path = os.path.abspath(sys.argv[0])
                 if os.path.exists(path):
                     return path
-        except Exception:
+        except:
             pass
 
-        # 方法3: 最后尝试sys.executable
+        # 最后尝试 sys.executable
         return os.path.abspath(sys.executable)
 
     @staticmethod
     def get_exe_directory() -> str:
-        """
-        获取exe所在目录
-        返回: exe文件的父目录路径
-        """
+        """获取exe所在目录"""
         exe_path = ExePathManager.get_real_exe_path()
         return os.path.dirname(exe_path)
 
     @staticmethod
     def get_resource_path(relative_path: str = '') -> str:
-        """
-        获取exe同目录下资源文件的绝对路径
-        参数:
-            relative_path: 相对于exe目录的相对路径
-        返回: 资源文件的完整绝对路径
-        """
+        """获取exe同目录下资源文件的绝对路径"""
         base_dir = ExePathManager.get_exe_directory()
         return os.path.join(base_dir, relative_path)
 
     @staticmethod
     def is_temp_directory(path: str) -> bool:
-        """
-        判断路径是否在临时目录
-        返回: True表示在临时目录，False表示不在
-        """
+        """判断路径是否在临时目录"""
         temp_dirs = [
             tempfile.gettempdir(),
             os.path.join(os.environ.get('TEMP', ''), ''),
@@ -209,7 +220,29 @@ def safe_widget_call(widget, method, *args, **kwargs):
     except tk.TclError:
         pass
     return None
+# 平台常量
+IS_WINDOWS = sys.platform == 'win32'
+IS_LINUX = sys.platform.startswith('linux')
+IS_MACOS = sys.platform == 'darwin'
 
+# 非法字符
+ILLEGAL_CHARS = '<>:"/\\|?*' if IS_WINDOWS else '/'
+
+def validate_path(path):
+    """验证路径是否包含非法字符，返回 (is_valid, error_msg)"""
+    if not path:
+        return False, "路径不能为空"
+    
+    filename = os.path.basename(path)
+    found = [c for c in ILLEGAL_CHARS if c in filename]
+    
+    if found:
+        return False, f"文件名包含非法字符: {', '.join(found)}\n请修改后再试"
+    
+    if filename.startswith(' ') or filename.endswith(' '):
+        return False, "文件名不能以空格开头或结尾"
+    
+    return True, ""
 # ==================== 主题管理器 ====================
 class ThemeManager:
     THEMES = {
@@ -273,6 +306,256 @@ class ThemeManager:
                 rec(child)
         rec(self.app.root)
 
+class VersionInfoDialog(tk.Toplevel):
+    def __init__(self, parent, app, version_data):
+        super().__init__(parent)
+        self.app = app
+        self.result = version_data.copy()
+        self.title("版本信息设置")
+        self.geometry("400x350")
+        self.transient(parent)
+        #self.grab_set()
+        
+        self.setup_ui()
+        self.load_data(version_data)
+       
+        # ✅ 修复：绑定方法名改为 self.on_drop
+        if DND_AVAILABLE:
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<Drop>>", self.on_drop)
+    
+    def setup_ui(self):
+        main = ttk.Frame(self, padding=10)
+        main.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(main, text="支持变量：{year}, {month}, {day}, {hour}, {minute}\n可将 version.txt 拖入窗口自动解析",
+                 foreground="gray", font=("Arial", 8)).pack(anchor=tk.W, pady=(0, 10))
+        
+        ttk.Label(main, text="产品名称:").pack(anchor=tk.W)
+        self.product_name = ttk.Entry(main, width=60)
+        self.product_name.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(main, text="公司名称:").pack(anchor=tk.W)
+        self.company_name = ttk.Entry(main, width=60)
+        self.company_name.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(main, text="文件版本:").pack(anchor=tk.W)
+        self.file_version = ttk.Entry(main, width=60)
+        self.file_version.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(main, text="产品版本:").pack(anchor=tk.W)
+        self.product_version = ttk.Entry(main, width=60)
+        self.product_version.pack(fill=tk.X, pady=(0, 10))
+        
+        btn_frame = ttk.Frame(main)
+        btn_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Button(btn_frame, text="📂导入", command=self.import_version_file).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="默认", command=self.reset_default).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="取消", command=self.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="确定", command=self.confirm).pack(side=tk.RIGHT, padx=5)
+    
+    def import_version_file(self):
+        from tkinter import filedialog
+        file_path = filedialog.askopenfilename(
+            title="选择 version.txt",
+            filetypes=[("Version files", "version.txt"), ("All files", "*.*")]
+        )
+        if file_path:
+            self.parse_version_file(file_path)
+    
+    # ✅ 修复：方法名改为 on_drop
+    def on_drop(self, event):
+        """弹窗拖拽文件解析"""
+        try:
+            paths = self.app._parse_drop_paths(event.data)
+        except Exception:
+            paths = self._manual_parse_paths(event.data)
+        
+        if not paths:
+            return
+        
+        files = paths[0]
+        
+        if not os.path.isfile(files):
+            return
+        
+        if not files.lower().endswith('.txt'):
+            messagebox.showwarning("无效文件", "请拖拽 .txt 版本文件")
+            return
+        
+        self.parse_version_file(files)
+    
+    def _manual_parse_paths(self, data):
+        """手动解析拖拽路径（兜底）"""
+        if not data:
+            return []
+        
+        data = data.strip('{}')
+        
+        try:
+            paths = self.tk.splitlist(data)
+        except Exception:
+            import re
+            quoted = re.findall(r'"([^"]+)"', data)
+            if quoted:
+                paths = quoted
+            else:
+                paths = [data]
+        
+        valid_paths = []
+        for p in paths:
+            p = p.strip()
+            if p.startswith('file://'):
+                p = p[7:]
+            if p and os.path.exists(p):
+                valid_paths.append(p)
+        
+        return valid_paths
+    
+    def parse_version_file(self, file_path):
+        """解析 version.txt 文件"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            import re
+            
+            # 提取 ProductName（多种格式）
+            patterns = [
+                r"StringStruct\(u'ProductName', u'([^']+)'\)",
+                r"StringStruct\('ProductName', '([^']+)'\)",
+                r'"ProductName"[,\s]*"([^"]+)"',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, content)
+                if match:
+                    self.product_name.delete(0, tk.END)
+                    self.product_name.insert(0, match.group(1))
+                    break
+            
+            # 提取 CompanyName
+            patterns = [
+                r"StringStruct\(u'CompanyName', u'([^']+)'\)",
+                r"StringStruct\('CompanyName', '([^']+)'\)",
+                r'"CompanyName"[,\s]*"([^"]+)"',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, content)
+                if match:
+                    self.company_name.delete(0, tk.END)
+                    self.company_name.insert(0, match.group(1))
+                    break
+            
+            # 提取 FileVersion
+            patterns = [
+                r"StringStruct\(u'FileVersion', u'([^']+)'\)",
+                r"StringStruct\('FileVersion', '([^']+)'\)",
+                r'"FileVersion"[,\s]*"([^"]+)"',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, content)
+                if match:
+                    self.file_version.delete(0, tk.END)
+                    self.file_version.insert(0, match.group(1))
+                    break
+            
+            # 提取 ProductVersion
+            patterns = [
+                r"StringStruct\(u'ProductVersion', u'([^']+)'\)",
+                r"StringStruct\('ProductVersion', '([^']+)'\)",
+                r'"ProductVersion"[,\s]*"([^"]+)"',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, content)
+                if match:
+                    self.product_version.delete(0, tk.END)
+                    self.product_version.insert(0, match.group(1))
+                    break
+            
+            self.app.safe_log(f"✅ 已从 {os.path.basename(file_path)} 导入版本信息")
+            
+        except Exception as e:
+            messagebox.showerror("导入失败", f"解析失败: {e}")
+
+    def load_data(self, data):
+        """加载现有版本信息到界面"""
+        self.product_name.delete(0, tk.END)
+        self.product_name.insert(0, data.get("ProductName", ""))
+
+        self.company_name.delete(0, tk.END)
+        self.company_name.insert(0, data.get("CompanyName", ""))
+
+        # 加载文件版本
+        file_version = data.get("FileVersion", "1.0.0.0")
+        self.file_version.delete(0, tk.END)
+        self.file_version.insert(0, file_version)
+
+        # 加载产品版本
+        product_version = data.get("ProductVersion", "")
+        if not product_version:
+            now = datetime.datetime.now()
+            time_str = now.strftime("%H%M").lstrip("0")
+            if time_str == "":
+                time_str = "0"
+            product_version = f"{now.year}.{now.month}.{now.day}.{time_str}"
+
+        self.product_version.delete(0, tk.END)
+        self.product_version.insert(0, product_version)
+
+    def _sync_version_product_name(self):
+        """同步版本信息中的产品名称为当前输出名称"""
+        if hasattr(self, 'version_info') and self.version_info:
+            current_name = self.output_name.get() if self.output_name.get() else "我的应用程序"
+            if self.version_info.get("ProductName") != current_name:
+                self.version_info["ProductName"] = current_name
+                self._save_version_config()
+                self.safe_log(f"🔄 已同步产品名称: {current_name}")
+    def reset_default(self):
+        import datetime
+        now = datetime.datetime.now()
+        default_data = {
+            "ProductName": self.app.output_name.get() if self.app.output_name.get() else "我的应用程序",
+            "CompanyName": "PyPackTool",
+            "FileVersion": "1.0.0.0",
+            "ProductVersion": f"{now.year}.{now.month}.{now.day}.{now.hour}{now.minute}"
+        }
+        self.load_data(default_data)
+
+    def confirm(self):
+        product_name = self.product_name.get().strip()
+        company_name = self.company_name.get().strip()
+        file_version = self.file_version.get().strip()
+        product_version = self.product_version.get().strip()
+
+        if not file_version:
+            file_version = "1.0.0.0"
+
+        if not product_version:
+            now = datetime.datetime.now()
+            time_str = now.strftime("%H%M").lstrip("0")
+            if time_str == "":
+                time_str = "0"
+            product_version = f"{now.year}.{now.month}.{now.day}.{time_str}"
+
+        self.result = {
+            "ProductName": product_name if product_name else "我的应用程序",
+            "CompanyName": company_name if company_name else "PyPackTool",
+            "FileVersion": file_version,
+            "ProductVersion": product_version
+        }
+
+        if hasattr(self, 'app'):
+            self.app._version_info_ready = True
+            self.app.version_info = self.result.copy()
+            self.app._save_version_config()
+            self.app.safe_log(f"✅ 版本信息已保存: 文件版本={file_version}, 产品版本={product_version}")
+
+        self.destroy()
+    
+    def get_result(self):
+        return self.result
+
 class GlobalConfig:
     """全局配置管理（独立于项目）"""
     
@@ -322,7 +605,7 @@ class GlobalConfig:
                 pass
         return ""
 
-# ==================== UI 组件（已修复 -bg 报错）====================
+# ==================== UI 组件====================
 class ModernButton(tk.Button):
     def __init__(self, master=None, **kw):
         self.normal_bg = kw.pop("normal_bg", "#e8ecf1")
@@ -342,7 +625,7 @@ class ToggleSwitch(tk.Canvas):
     def __init__(self, master=None, width=26, height=18, on=False, command=None):
         self._on = on
         self._cmd = command
-        # 修复：ttk.Frame 不支持 bg，捕获异常
+        
         try:
             bg = master.cget("bg")
         except tk.TclError:
@@ -378,7 +661,7 @@ class ToggleSwitch(tk.Canvas):
 class ToggleSwitchWithLabel(tk.Frame):
     def __init__(self, master=None, text="", on=False, command=None, **kw):
         super().__init__(master, **kw)
-        # 修复：ttk.Frame 不支持 bg，捕获异常
+      
         try:
             bg = master.cget("bg")
         except tk.TclError:
@@ -406,7 +689,7 @@ class IconMakerDialog(tk.Toplevel):
         self.zoom = 1.0
         self.setup_ui()
         self.transient(parent)
-        self.grab_set()
+        #self.grab_set()
 
     def setup_ui(self):
         main = ttk.Frame(self, padding=10)
@@ -702,7 +985,7 @@ class PackageGUI:
                 ctypes.windll.kernel32.SetConsoleOutputCP(65001)
             except: pass
         # 日期（自动获取)
-        BUILD_DATE = "2026-05-18"
+        BUILD_DATE = "2026-05-20"
         self.BUILD_DATE = BUILD_DATE  # 保存到实例变量
         self.root = TkinterDnD.Tk() if DND_AVAILABLE else tk.Tk()
         self.root.title(f"Python代码打包工具 - 跨平台支持 {BUILD_DATE}")
@@ -727,9 +1010,10 @@ class PackageGUI:
 
         # ========== 第2步：初始化基础变量 ==========
         self.current_dir = ExePathManager.get_exe_directory()
+        self.safe_log(f"当前 exe 目录: {self.current_dir}")
         self.dist_dir = os.path.join(self.current_dir, "dist")
         os.makedirs(self.dist_dir, exist_ok=True)
-
+   
         # 初始化变量
         self.hidden_imports_list = []
         self.data_files_list = []
@@ -741,6 +1025,8 @@ class PackageGUI:
         self.use_venv = False
         self._upx_auto_find_done = False
 
+        self.venv_process = None      # 虚拟环境创建进程
+        self.stop_venv = False        # 虚拟环境停止标志
         # 编译器属性默认值
         self.has_msvc = False
         self.has_mingw = False
@@ -757,6 +1043,10 @@ class PackageGUI:
         self.upx_path = tk.StringVar()
         self.use_upx = tk.BooleanVar(value=True)
         self.debug_mode = tk.BooleanVar(value=False)
+        self.version_info = None
+        self._version_info_ready = False
+        self._python_list_cache = []
+        self._python_list_time = 0
 
         try:
             import multiprocessing
@@ -797,6 +1087,7 @@ class PackageGUI:
         self.current_music_index = 0
         self.music_process = None
 
+
     def _async_init(self):
         """异步初始化所有耗时操作"""
         # 1. 加载全局UPX配置
@@ -826,7 +1117,7 @@ class PackageGUI:
             else:
                 self.safe_log("🔍 首次运行，正在自动检测系统Python...")
                 threading.Thread(target=self._async_find_python, daemon=True).start()
-
+        self._refresh_python_list()
         # 5. 检测编译器（耗时）
         threading.Thread(target=self._detect_compilers_async, daemon=True).start()
 
@@ -903,6 +1194,50 @@ class PackageGUI:
                 self.upx_entry.delete(0, tk.END)
                 self.upx_entry.insert(0, path)
 
+    def _find_system_python_by_cmd(self):
+        """使用系统命令查找 Python"""
+
+        if sys.platform == "win32":
+            try:
+                result = subprocess.run(
+                    ["where", "python.exe"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    startupinfo=get_startupinfo()
+                )
+                if result.returncode == 0:
+                    paths = result.stdout.strip().split('\n')
+                    for path in paths:
+                        if path and os.path.exists(path):
+                            if ExePathManager.is_temp_directory(path):
+                                continue
+                            if ExePathManager.is_frozen():
+                                if os.path.abspath(path).lower() == os.path.abspath(sys.executable).lower():
+                                    continue
+                            return path
+            except:
+                pass
+        else:
+            try:
+                result = subprocess.run(["which", "python3"], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    path = result.stdout.strip()
+                    if path and os.path.exists(path):
+                        return path
+            except:
+                pass
+            try:
+                result = subprocess.run(["which", "python"], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    path = result.stdout.strip()
+                    if path and os.path.exists(path):
+                        return path
+            except:
+                pass
+
+        return None
+
     def _async_find_python(self):
         """后台线程查找Python"""
 
@@ -924,17 +1259,18 @@ class PackageGUI:
         if not path or not os.path.exists(path):
             return
 
-        # 关键过滤：只接受以 python.exe 结尾的路径
         if not path.lower().endswith('python.exe'):
             return
 
-        # 打包环境下拒绝 exe 自身
-        if getattr(sys, 'frozen', False):
+        # 使用 ExePathManager 判断打包环境
+        if ExePathManager.is_frozen():
             if os.path.abspath(path).lower() == os.path.abspath(sys.executable).lower():
                 self.safe_log("⚠️ 不能将程序自身设置为Python路径")
                 return
+            if ExePathManager.is_temp_directory(path):
+                self.safe_log("⚠️ 路径在临时目录，无效")
+                return
 
-        # 只处理 .EXE 后缀
         path = path.replace('.EXE', '.exe').replace('.Exe', '.exe')
         self.custom_python_path.set(path)
         if not self.custom_python_path.get():
@@ -945,6 +1281,7 @@ class PackageGUI:
             if hasattr(self, 'python_path_entry'):
                 self.python_path_entry.delete(0, tk.END)
                 self.python_path_entry.insert(0, path)
+        self._update_python_ui_state()
 
     # ========== 通用可执行文件查找方法 ==========
     def _find_executable(self, names, common_paths=None):
@@ -998,6 +1335,352 @@ class PackageGUI:
             setattr(self, cache_attr, path)
         return path
 
+    def _get_version_info(self):
+        """获取完整的版本信息（优先级：弹窗设置 > version.txt > 默认值）"""
+        # 1. 优先使用弹窗设置的版本信息
+        if hasattr(self, 'version_info') and self.version_info and getattr(self, '_version_info_ready', False):
+            product_name = self.version_info.get("ProductName", "")
+            company_name = self.version_info.get("CompanyName", "")
+            file_version = self.version_info.get("FileVersion", "")
+            product_version = self.version_info.get("ProductVersion", "")
+
+            if not product_name:
+                product_name = self.output_name.get() if self.output_name.get() else "我的应用程序"
+            if not company_name:
+                company_name = "PyPackTool"
+            if not file_version:
+                file_version = "1.0.0.0"
+            if not product_version:
+                product_version = self._get_default_version()
+
+            return {
+                "ProductName": self._format_version_string(product_name),
+                "CompanyName": self._format_version_string(company_name),
+                "FileVersion": self._normalize_version(file_version),
+                "ProductVersion": self._format_version_string(product_version),
+                "Copyright": f"Copyright (c) {datetime.datetime.now().year} {company_name}",
+                "InternalName": product_name.replace(" ", ""),
+                "OriginalFilename": f"{product_name.replace(' ', '')}.exe"
+            }
+
+        # 2. 尝试从 version.txt 读取
+        version_file = os.path.join(self.current_dir, "version.txt")
+        if os.path.exists(version_file):
+            try:
+                with open(version_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                version_info = {}
+                # 解析各个字段...
+                if version_info:
+                    return version_info
+            except:
+                pass
+
+        # 3. 使用默认值
+        default_product = self.output_name.get() if self.output_name.get() else "我的应用程序"
+        return {
+            "ProductName": default_product,
+            "CompanyName": "PyPackTool",
+            "FileVersion": "1.0.0.0",
+            "ProductVersion": self._get_default_version(),
+            "Copyright": f"Copyright (c) {datetime.datetime.now().year} PyPackTool",
+            "InternalName": default_product.replace(" ", ""),
+            "OriginalFilename": f"{default_product.replace(' ', '')}.exe"
+        }
+
+    def _get_default_version(self):
+        """获取默认版本号（基于当前时间）"""
+        now = datetime.datetime.now()
+        time_str = now.strftime("%H%M").lstrip("0")
+        if time_str == "":
+            time_str = "0"
+        return f"{now.year}.{now.month}.{now.day}.{time_str}"
+
+    def _normalize_version(self, version_str, default="1.0.0.0"):
+        """规范化版本号格式为 x.x.x.x"""
+        if not version_str:
+            return default
+        import re
+        parts = re.findall(r'\d+', str(version_str))
+        clean_parts = []
+        for part in parts[:4]:
+            try:
+                clean_parts.append(str(int(part)))
+            except:
+                clean_parts.append("0")
+        while len(clean_parts) < 4:
+            clean_parts.append("0")
+        return ".".join(clean_parts)
+
+    def _apply_version_to_pyinstaller(self, cmd):
+        """为 PyInstaller 应用版本信息"""
+        version_info = self._get_version_info()
+        version_file = self._create_version_file_from_info(version_info)
+        if version_file and os.path.exists(version_file):
+            cmd.append(f"--version-file={version_file}")
+            self.safe_log(f"📄 版本信息已应用:")
+            self.safe_log(f"   产品名称: {version_info['ProductName']}")
+            self.safe_log(f"   公司名称: {version_info['CompanyName']}")
+            self.safe_log(f"   文件版本: {version_info['FileVersion']}")
+            self.safe_log(f"   产品版本: {version_info['ProductVersion']}")
+            return version_file
+        return None
+
+    def _apply_version_to_nuitka(self, cmd):
+        """为 Nuitka 应用版本信息"""
+        version_info = self._get_version_info()
+        cmd.extend([
+            f"--product-name={version_info['ProductName']}",
+            f"--product-version={version_info['ProductVersion']}",
+            f"--file-version={version_info['FileVersion']}",
+            f"--company-name={version_info['CompanyName']}",
+            f"--file-description={version_info['ProductName']}",
+            f"--copyright={version_info['Copyright']}"
+        ])
+        self.safe_log(f"📄 版本信息已应用:")
+        self.safe_log(f"   产品名称: {version_info['ProductName']}")
+        self.safe_log(f"   公司名称: {version_info['CompanyName']}")
+        self.safe_log(f"   文件版本: {version_info['FileVersion']}")
+        self.safe_log(f"   产品版本: {version_info['ProductVersion']}")
+
+    def _create_version_file_from_info(self, version_info):
+        """根据版本信息字典创建 version.txt 文件"""
+        version_file = os.path.join(self.current_dir, f"_temp_version_{int(time.time())}.txt")
+        now = datetime.datetime.now()
+
+        # 解析版本号
+        file_vers = version_info['FileVersion'].split('.')
+        file_vers_padded = []
+        for i in range(4):
+            if i < len(file_vers):
+                try:
+                    file_vers_padded.append(int(file_vers[i]))
+                except:
+                    file_vers_padded.append(0)
+            else:
+                file_vers_padded.append(0)
+
+        prod_vers = version_info['ProductVersion'].split('.')
+        prod_vers_padded = []
+        for i in range(4):
+            if i < len(prod_vers):
+                try:
+                    prod_vers_padded.append(int(prod_vers[i]))
+                except:
+                    prod_vers_padded.append(0)
+            else:
+                prod_vers_padded.append(0)
+
+        lines = [
+            "VSVersionInfo(",
+            "  ffi=FixedFileInfo(",
+            f"    filevers=({','.join(str(v) for v in file_vers_padded)}),",
+            f"    prodvers=({','.join(str(v) for v in prod_vers_padded)}),",
+            "    mask=0x3f,",
+            "    flags=0x0,",
+            "    OS=0x40004,",
+            "    fileType=0x1,",
+            "    subtype=0x0,",
+            "    date=(0, 0)",
+            "  ),",
+            "  kids=[",
+            "    StringFileInfo(",
+            "      [",
+            "        StringTable(",
+            "          u'040904B0',",
+            "          [",
+            f"            StringStruct(u'CompanyName', u'{version_info['CompanyName']}'),",
+            f"            StringStruct(u'FileDescription', u'{version_info['ProductName']}'),",
+            f"            StringStruct(u'FileVersion', u'{version_info['FileVersion']}'),",
+            f"            StringStruct(u'InternalName', u'{version_info['InternalName']}'),",
+            f"            StringStruct(u'LegalCopyright', u'{version_info['Copyright']}'),",
+            f"            StringStruct(u'OriginalFilename', u'{version_info['OriginalFilename']}'),",
+            f"            StringStruct(u'ProductName', u'{version_info['ProductName']}'),",
+            f"            StringStruct(u'ProductVersion', u'{version_info['ProductVersion']}')",
+            "          ]",
+            "        )",
+            "      ]",
+            "    ),",
+            "    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])",
+            "  ]",
+            ")",
+            "",
+        ]
+
+        content = "\n".join(lines)
+        try:
+            with open(version_file, "w", encoding="utf-8", newline="\n") as f:
+                f.write(content)
+            return version_file
+        except Exception as e:
+            self.safe_log(f"⚠️ 创建版本文件失败: {e}")
+            return None
+
+    def _open_version_dialog(self):
+        """打开版本信息设置弹窗"""
+        now = datetime.datetime.now()
+        current_product_name = self.output_name.get() if self.output_name.get() else "我的应用程序"
+
+        # 获取当前版本信息
+        if hasattr(self, 'version_info') and self.version_info and self._version_info_ready:
+            # 已有保存的版本信息，但需要更新产品名称为当前文件名
+            current_data = self.version_info.copy()
+            # 同步产品名称为当前的输出名称
+            current_data["ProductName"] = current_product_name
+            self.safe_log(f"📦 使用已有版本配置，同步产品名称: {current_product_name}")
+        else:
+            # 尝试从配置文件加载
+            if self._load_version_config():
+                current_data = self.version_info.copy()
+                # 同步产品名称为当前的输出名称
+                current_data["ProductName"] = current_product_name
+                self.safe_log(f"📦 从配置文件加载版本信息，同步产品名称: {current_product_name}")
+            else:
+                # 使用默认值
+                time_str = now.strftime("%H%M").lstrip("0")
+                if time_str == "":
+                    time_str = "0"
+                current_data = {
+                    "ProductName": current_product_name,
+                    "CompanyName": "PyPackTool",
+                    "FileVersion": "1.0.0.0",
+                    "ProductVersion": f"{now.year}.{now.month}.{now.day}.{time_str}"
+                }
+                self.safe_log(f"📦 使用默认版本信息，产品名称: {current_product_name}")
+
+        dialog = VersionInfoDialog(self.root, self, current_data)
+        self.root.wait_window(dialog)
+
+        if hasattr(dialog, 'result') and dialog.result:
+            self.version_info = dialog.result
+            self._version_info_ready = True
+            self.safe_log(f"✅ 版本信息已更新:")
+            self.safe_log(f"   产品名称: {self.version_info.get('ProductName', '')}")
+            self.safe_log(f"   公司名称: {self.version_info.get('CompanyName', '')}")
+            self.safe_log(f"   文件版本: {self.version_info.get('FileVersion', '')}")
+            self.safe_log(f"   产品版本: {self.version_info.get('ProductVersion', '')}")
+            self._save_version_to_file()
+            self._save_version_config()
+
+    def _save_version_config(self):
+        """保存版本信息配置"""
+        if hasattr(self, 'version_info') and self.version_info:
+            cfg = os.path.join(self.current_dir, "version_config.json")
+            try:
+                with open(cfg, "w", encoding="utf-8") as f:
+                    json.dump(self.version_info, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                self.safe_log(f"⚠️ 保存版本配置失败: {e}")
+
+    def _load_version_config(self):
+        """加载版本信息配置"""
+        cfg = os.path.join(self.current_dir, "version_config.json")
+        if os.path.exists(cfg):
+            try:
+                with open(cfg, "r", encoding="utf-8") as f:
+                    self.version_info = json.load(f)
+                    return True
+            except:
+                pass
+        return False
+
+    def _format_version_string(self, template):
+        """格式化版本字符串"""
+        now = datetime.datetime.now()
+        return template.format(
+            year=now.year,
+            month=now.month,
+            day=now.day,
+            hour=now.hour,
+            minute=now.minute
+        )
+
+    def _save_version_to_file(self):
+        """将当前版本信息保存到 version.txt"""
+        if not hasattr(self, 'version_info') or not self.version_info:
+            return
+
+        version_file = os.path.join(self.current_dir, "version.txt")
+        now = datetime.datetime.now()
+
+        product_name = self.version_info.get("ProductName", "我的应用程序")
+        company_name = self.version_info.get("CompanyName", "PyPackTool")
+        file_version = self.version_info.get("FileVersion", "1.0.0.0")
+        product_version = self.version_info.get("ProductVersion",
+                                                f"{now.year}.{now.month}.{now.day}.{now.hour}{now.minute}")
+
+        # 格式化变量
+        product_name = self._format_version_string(product_name)
+        company_name = self._format_version_string(company_name)
+        product_version = self._format_version_string(product_version)
+
+        # 解析版本号
+        version_parts = product_version.split('.')
+        prod_vers = []
+        for i in range(4):
+            if i < len(version_parts):
+                try:
+                    prod_vers.append(int(version_parts[i]))
+                except:
+                    prod_vers.append(0)
+            else:
+                prod_vers.append(0)
+
+        file_vers = file_version.split('.')
+        file_vers_padded = []
+        for i in range(4):
+            if i < len(file_vers):
+                try:
+                    file_vers_padded.append(int(file_vers[i]))
+                except:
+                    file_vers_padded.append(0)
+            else:
+                file_vers_padded.append(0)
+
+        lines = [
+            "VSVersionInfo(",
+            "  ffi=FixedFileInfo(",
+            f"    filevers=({','.join(str(v) for v in file_vers_padded)}),",
+            f"    prodvers=({','.join(str(v) for v in prod_vers)}),",
+            "    mask=0x3f,",
+            "    flags=0x0,",
+            "    OS=0x40004,",
+            "    fileType=0x1,",
+            "    subtype=0x0,",
+            "    date=(0, 0)",
+            "  ),",
+            "  kids=[",
+            "    StringFileInfo(",
+            "      [",
+            "        StringTable(",
+            "          u'040904B0',",
+            "          [",
+            f"            StringStruct(u'CompanyName', u'{company_name}'),",
+            f"            StringStruct(u'FileDescription', u'{product_name}'),",
+            f"            StringStruct(u'FileVersion', u'{file_version}'),",
+            f"            StringStruct(u'InternalName', u'{product_name.replace(' ', '')}'),",
+            f"            StringStruct(u'LegalCopyright', u'Copyright (c) {now.year} {company_name}'),",
+            f"            StringStruct(u'OriginalFilename', u'{product_name.replace(' ', '')}.exe'),",
+            f"            StringStruct(u'ProductName', u'{product_name}'),",
+            f"            StringStruct(u'ProductVersion', u'{product_version}')",
+            "          ]",
+            "        )",
+            "      ]",
+            "    ),",
+            "    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])",
+            "  ]",
+            ")",
+            "",
+        ]
+
+        content = "\n".join(lines)
+        try:
+            with open(version_file, "w", encoding="utf-8", newline="\n") as f:
+                f.write(content)
+            self.safe_log(f"✅ 版本信息已保存到 {version_file}")
+        except Exception as e:
+            self.safe_log(f"⚠️ 保存 version.txt 失败: {e}")
+
     def _build_ui(self):
         mf = ttk.Frame(self.root, padding="5")
         mf.pack(fill=tk.BOTH, expand=True)
@@ -1013,6 +1696,8 @@ class PackageGUI:
         r1 = ttk.Frame(top)
         r1.pack(fill=tk.X, pady=2)
         ttk.Label(r1, text="输入文件:", width=8).pack(side=tk.LEFT)
+        ttk.Label(r1, text="(可拖拽)", foreground="gray", font=("Arial", 8)).pack(
+            side=tk.LEFT, padx=(2, 0))
         self.input_path = tk.StringVar()
         self.input_entry = ttk.Entry(r1, textvariable=self.input_path)
         self.input_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
@@ -1042,7 +1727,14 @@ class PackageGUI:
         r_env = ttk.Frame(top)
         r_env.pack(fill=tk.X, pady=2)
         ttk.Label(r_env, text="Python路径:", width=9).pack(side=tk.LEFT)
-        ttk.Entry(r_env, textvariable=self.custom_python_path).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        #ttk.Entry(r_env, textvariable=self.custom_python_path).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        # 改为 Combobox
+        self.python_path_combo = ttk.Combobox(r_env, textvariable=self.custom_python_path, state="readonly", width=30)
+        self.python_path_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.python_path_combo.bind("<<ComboboxSelected>>", self._on_python_selected)
+        self.refresh_python_btn = ModernButton(r_env, text="🔄", command=self._refresh_python_list, width=3)
+        self.refresh_python_btn.pack(side=tk.LEFT, padx=1)
+        self._add_tooltip(self.refresh_python_btn, "刷新")
         self.py_label = ttk.Label(r_env, text="", foreground="blue", font=("Consolas", 9))
         self.py_label.pack(side=tk.LEFT, padx=(10, 2))
         #for text, cmd in [("🔎浏览", self._select_python), ("🎫测试", self._test_python), ("🗑清除", self._clear_python)]:
@@ -1051,7 +1743,7 @@ class PackageGUI:
         self.browse_python_btn.pack(side=tk.LEFT, padx=1)
         self.test_python_btn = ModernButton(r_env, text="🎫测试", command=self._test_python, width=5)
         self.test_python_btn.pack(side=tk.LEFT, padx=1)
-        self.clear_switch_python_btn = ModernButton(r_env, text="清除", command=self._clear_python, width=5)
+        self.clear_switch_python_btn = ModernButton(r_env, text="🗑清除", command=self._clear_python, width=5)
         self.clear_switch_python_btn.pack(side=tk.LEFT, padx=1)
 
         opt = ttk.LabelFrame(top, text="打包选项", padding="3")
@@ -1144,35 +1836,45 @@ class PackageGUI:
 
         ttk.Label(
             nk,
-            text="(--deployment --windows-icon --windows-console-mode=disable)",
+            text="(--deployment --windows-console-mode=disable)",
             foreground="gray",
             font=("Arial", 8)
         ).pack(side=tk.LEFT, padx=0)
 
         self._update_compiler_status()
-    
+
+        # ========== 排除选项行（整个 bar 区域可拖拽 version.txt）==========
         bar = ttk.Frame(mf)
         bar.pack(fill=tk.X, pady=3)
         self.folders_bar = bar
 
-        self.exclude_btn = ModernButton(bar, text="▶ 排除选项", command=self._toggle_exclude,
+        # ✅ 整个 bar 绑定 DND（左边按钮区+中间空白+右边版本信息都能拖）
+        if DND_AVAILABLE:
+            bar.drop_target_register(DND_FILES)
+            bar.dnd_bind("<<Drop>>", self._on_version_drop)
+        self.exclude_btn = ModernButton(bar, text="▶排除选项", command=self._toggle_exclude,
                                        normal_bg="#eef2f7", hover_bg="#e4e9f0", normal_fg="#4a5568", width=10)
         self.exclude_btn.pack(side=tk.LEFT)
         self.exclude_count = ttk.Label(bar, text="(0)", foreground="gray")
         self.exclude_count.pack(side=tk.LEFT, padx=5)
         # 自动导入按钮
-        self.auto_import_btn = ModernButton(bar, text="⚡ 自动导入", command=self._auto_import_modules,
+        self.auto_import_btn = ModernButton(bar, text="⚡自动导入", command=self._auto_import_modules,
                                             normal_bg="#eef2f7", hover_bg="#e4e9f0", normal_fg="#4a5568",
                                             hover_fg="#ffffff", width=10)
         self.auto_import_count = ttk.Label(bar, text="", foreground="orange")
         # 初始不显示，等有分析结果再显示
 
-        self.adv_btn = ModernButton(bar, text="▶ 依赖数据", command=self._toggle_advanced,
+        self.adv_btn = ModernButton(bar, text="▶依赖数据", command=self._toggle_advanced,
                                    normal_bg="#eef2f7", hover_bg="#e4e9f0", normal_fg="#4a5568", width=10)
         self.adv_btn.pack(side=tk.LEFT, padx=(20, 0))
         self.adv_count = ttk.Label(bar, text="(0)", foreground="gray")
         self.adv_count.pack(side=tk.LEFT, padx=5)
-
+        
+        self.version_info_btn = ModernButton(bar, text="📋版本更新", command=self._open_version_dialog,
+                                     normal_bg="#eef2f7", hover_bg="#e4e9f0", normal_fg="#4a5568",
+                                     hover_fg="#ffffff", width=10)
+        self.version_info_btn.pack(side=tk.RIGHT, padx=5)
+        
         self.exclude_frame = ttk.Frame(mf)
         self.exclude_visible = False
 
@@ -1368,7 +2070,101 @@ class PackageGUI:
         self._add_tooltip(self.help_about_btn, "关于/帮助")
 
         self.status_bar = status
-        
+
+    def _on_version_drop(self, event):
+        """主界面拖拽 version.txt - 直接生效，不打开弹窗"""
+        temp_dialog = VersionInfoDialog.__new__(VersionInfoDialog)
+        temp_dialog.app = self
+
+        try:
+            paths = temp_dialog._manual_parse_paths(event.data)
+        except Exception:
+            paths = []
+        finally:
+            del temp_dialog
+
+        if not paths:
+            return
+
+        files = paths[0]
+
+        if not os.path.isfile(files) or not files.lower().endswith('.txt'):
+            return
+
+        try:
+            # 直接读取并解析 version.txt
+            with open(files, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            import re
+            self.version_info = {}
+
+            # 提取各字段（和弹窗解析逻辑一致）
+            match = re.search(r"StringStruct\(u'ProductName', u'([^']+)'\)", content)
+            if match:
+                self.version_info["ProductName"] = match.group(1)
+
+            match = re.search(r"StringStruct\(u'CompanyName', u'([^']+)'\)", content)
+            if match:
+                self.version_info["CompanyName"] = match.group(1)
+
+            match = re.search(r"StringStruct\(u'FileVersion', u'([^']+)'\)", content)
+            if match:
+                self.version_info["FileVersion"] = match.group(1)
+
+            match = re.search(r"StringStruct\(u'ProductVersion', u'([^']+)'\)", content)
+            if match:
+                self.version_info["ProductVersion"] = match.group(1)
+
+            # ✅ 直接生效：设置标志位
+            self._version_info_ready = True
+            '''
+            # 按钮变绿
+            self.version_info_btn.configure(
+                normal_bg="#4caf50", hover_bg="#45a049", normal_fg="#ffffff"
+            )
+            '''
+            self.safe_log(f"✅ 版本信息已生效: {os.path.basename(files)}")
+            if self.version_info.get("ProductVersion"):
+                self.safe_log(f"   产品版本: {self.version_info['ProductVersion']}")
+
+        except Exception as e:
+            self.safe_log(f"❌ 导入失败: {e}")
+
+    def _import_version_from_file(self, file_path):
+        """从 version.txt 导入版本信息（主界面拖拽，自动确认）"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            import re
+            version_info = {}
+
+            match = re.search(r"StringStruct\(u'ProductName', u'([^']+)'\)", content)
+            if match:
+                version_info["ProductName"] = match.group(1)
+
+            match = re.search(r"StringStruct\(u'CompanyName', u'([^']+)'\)", content)
+            if match:
+                version_info["CompanyName"] = match.group(1)
+
+            match = re.search(r"StringStruct\(u'FileVersion', u'([^']+)'\)", content)
+            if match:
+                version_info["FileVersion"] = match.group(1)
+
+            match = re.search(r"StringStruct\(u'ProductVersion', u'([^']+)'\)", content)
+            if match:
+                version_info["ProductVersion"] = match.group(1)
+
+            self.version_info = version_info
+            self._version_info_ready = True  # 添加这行
+            self.safe_log(f"✅ 已从 {os.path.basename(file_path)} 导入版本信息")
+            self.safe_log(f"   产品名称: {version_info.get('ProductName', '未设置')}")
+            self.safe_log(f"   产品版本: {version_info.get('ProductVersion', '未设置')}")
+
+        except Exception as e:
+            self.safe_log(f"❌ 导入失败: {e}")
+
     def _add_tooltip(self, widget, text):
         def enter(e):
             tip = tk.Toplevel(widget)
@@ -1470,6 +2266,7 @@ class PackageGUI:
                 self.auto_import_btn.pack_forget()
                 self.auto_import_count.pack_forget()
 
+    
 
     def _find_default_py(self):
         """查找默认Python文件，优先选择入口文件"""
@@ -1506,153 +2303,200 @@ class PackageGUI:
             except: pass
         return datetime.datetime.now().strftime("%Y.%m.%d.%H%M")
 
-    def _create_version_file(self):
-        """生成 version.txt 版本信息文件"""
-        import datetime
-        import os
-
-        version_file = os.path.join(self.current_dir, "version.txt")
-        now = datetime.datetime.now()
-
-        # 将小时和分钟合并为一个数字，去掉前导零的问题
-        # 例如 15:43 -> 1543，但这不是好办法
-        # 更好的方法：使用秒数或单独处理
-
-        # 方案：使用 date 和 time 分开，time 用字符串去掉前导零
-        time_str = now.strftime("%H%M").lstrip("0")  # "1543" 或 "943"（如果09:43变成"943"）
-        if time_str == "":
-            time_str = "0"
-
-        product_version = f"{now.year}.{now.month}.{now.day}.{time_str}"
-
-        # 4个参数：(年, 月, 日, 时间数字)
-        # 时间数字需要是整数且没有前导零
-        time_num = int(time_str)  # "943" -> 943, "1543" -> 1543
-
-        lines = [
-            "VSVersionInfo(",
-            "  ffi=FixedFileInfo(",
-            "    filevers=(1, 0, 0, 0),",
-            f"    prodvers=({now.year}, {now.month}, {now.day}, {time_num}),",
-            "    mask=0x3f,",
-            "    flags=0x0,",
-            "    OS=0x40004,",
-            "    fileType=0x1,",
-            "    subtype=0x0,",
-            "    date=(0, 0)",
-            "  ),",
-            "  kids=[",
-            "    StringFileInfo(",
-            "      [",
-            "        StringTable(",
-            "          u'040904B0',",
-            "          [",
-            "            StringStruct(u'CompanyName', u'PyPackTool'),",
-            "            StringStruct(u'FileDescription', u'Python Packing Tool'),",
-            "            StringStruct(u'FileVersion', u'1.0.0.0'),",
-            "            StringStruct(u'InternalName', u'PyPackTool'),",
-            f"            StringStruct(u'LegalCopyright', u'Copyright (c) {now.year}'),",
-            "            StringStruct(u'OriginalFilename', u'PyPackTool.exe'),",
-            "            StringStruct(u'ProductName', u'PyPackTool'),",
-            f"            StringStruct(u'ProductVersion', u'{product_version}')",
-            "          ]",
-            "        )",
-            "      ]",
-            "    ),",
-            "    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])",
-            "  ]",
-            ")",
-            "",
-        ]
-
-        content = "\n".join(lines)
-
-        with open(version_file, "w", encoding="utf-8", newline="\n") as f:
-            f.write(content)
-
-        return version_file
 
     def _update_python_btn(self):
         """根据当前 Python 路径是否为虚拟环境，更新按钮文字"""
         current = self.custom_python_path.get()
         if current and self._is_virtual_env_path(current):
-            self.clear_switch_python_btn.config(text="切换")
+            self.clear_switch_python_btn.config(text="🔄切换")
             self._add_tooltip(self.clear_switch_python_btn, "当前为虚拟环境，点击可切换回系统Python")
             # 虚拟环境模式：按钮显示"切换"，背景色改为橙色
-            self.clear_switch_python_btn.config(text="切换", bg="#ff9800", fg="#ffffff")
+            self.clear_switch_python_btn.config(text="🔄切换", bg="#ff9800", fg="#ffffff")
             self.clear_switch_python_btn.normal_bg = "#ff9800"
             self.clear_switch_python_btn.hover_bg = "#ffa726"
         else:
-            self.clear_switch_python_btn.config(text="清除")
+            self.clear_switch_python_btn.config(text="🗑清除")
             # 正常模式：按钮显示"清除"，恢复默认颜色
-            self.clear_switch_python_btn.config(text="清除", bg="#e8ecf1", fg="#333333")
+            self.clear_switch_python_btn.config(text="🗑清除", bg="#e8ecf1", fg="#333333")
             self.clear_switch_python_btn.normal_bg = "#e8ecf1"
             self.clear_switch_python_btn.hover_bg = "#4a8dd9"
 
+    # 1. 去 .py 扩展名（模块级函数，类外定义）
+    def strip_py_ext(self, filename):
+        """去掉末尾连续的 .py（大小写不敏感）"""
+        return re.sub(r'(\.[pP][yY])+$', '', filename)
+
+    def parse_drop_path(self, data):
+        if not data:        
+            return ""
+        # 去掉花括号（如果存在）
+        if data.startswith('{') and data.endswith('}'):
+            data = data[1:-1]
+        # 直接处理完整路径，不要 split！
+        path = data.strip().strip('"').strip("'")
+
+        if path.startswith("file://"):
+            path = path[7:]
+        result = path.replace('/', os.sep)  
+        return result
+
+    # 2. 统一处理路径（类内方法）
+    def _normalize_path(self, path):
+        """
+        统一处理路径（拖拽/选择通用）
+        """
+        if not path:
+            return ""
+
+        path = path.strip('{}')
+        if path.startswith("file://"):
+            path = path[7:]
+        path = path.replace('/', os.sep)
+        path = path.strip('"')
+
+        return path
+
+    # 4. 递归收集文件（类内方法）
+    def _collect_files_recursive(self, path, pattern=None):
+        """
+        递归收集路径下的所有文件
+        """
+        files = []
+
+        if os.path.isfile(path):
+            if pattern is None or fnmatch.fnmatch(os.path.basename(path), pattern):
+                files.append(path)
+        elif os.path.isdir(path):
+            for root, dirs, filenames in os.walk(path):
+                for filename in filenames:
+                    if pattern is None or fnmatch.fnmatch(filename, pattern):
+                        files.append(os.path.join(root, filename))
+
+        return files
+
+    def _find_all_python(self):
+        """查找系统中所有可用的 Python 解释器（优化版）"""
+        # 使用缓存，避免重复搜索
+        if hasattr(self, '_python_list_cache') and time.time() - getattr(self, '_python_list_time', 0) < 300:
+            return self._python_list_cache
+
+        python_paths = set()
+
+        # 1. 从 PATH 环境变量查找（快速）
+        for d in os.environ.get("PATH", "").split(os.pathsep):
+            for name in ['python.exe', 'python3.exe', 'python']:
+                full = os.path.join(d, name)
+                if os.path.exists(full):
+                    try:
+                        real_path = os.path.realpath(full)
+                        python_paths.add(real_path)
+                    except:
+                        python_paths.add(full)
+
+        # 2. 常见安装路径（快速）
+        common_paths = [
+            r"C:\Python312\python.exe", r"C:\Python311\python.exe",
+            r"C:\Python310\python.exe", r"D:\Python312\python.exe",
+            os.path.expanduser(r"~\AppData\Local\Programs\Python\Python312\python.exe"),
+            "/usr/bin/python3", "/usr/local/bin/python3",
+        ]
+        for p in common_paths:
+            if os.path.exists(p):
+                python_paths.add(p)
+
+        # 3. 使用 where/which 命令（可能慢，放在最后）
+        try:
+            if sys.platform == "win32":
+                result = subprocess.run(["where", "python"], capture_output=True, text=True, timeout=3)
+                for line in result.stdout.splitlines():
+                    if line.strip() and os.path.exists(line.strip()):
+                        python_paths.add(line.strip())
+            else:
+                for name in ['python3', 'python']:
+                    result = subprocess.run(["which", "-a", name], capture_output=True, text=True, timeout=3)
+                    for line in result.stdout.splitlines():
+                        if line.strip() and os.path.exists(line.strip()):
+                            python_paths.add(line.strip())
+        except:
+            pass
+
+        # 过滤虚拟环境
+        python_list = sorted([p for p in python_paths if 'common_venv' not in p.lower()])
+
+        # 缓存结果
+        self._python_list_cache = python_list
+        self._python_list_time = time.time()
+
+        return python_list
+
+    def _refresh_python_list(self):
+        """异步刷新可用的 Python 路径列表"""
+        # 显示加载提示
+        self.python_path_combo.set("正在搜索...")
+
+        def search():
+            python_paths = self._find_all_python()
+            self.root.after(0, lambda: self._update_python_list(python_paths))
+
+        threading.Thread(target=search, daemon=True).start()
+
+    def _update_python_list(self, python_paths):
+        """更新下拉框列表（主线程）"""
+        if python_paths:
+            self.python_path_combo['values'] = python_paths
+            current = self.custom_python_path.get()
+            if current in python_paths:
+                self.python_path_combo.set(current)
+            elif python_paths:
+                self.python_path_combo.set(python_paths[0])
+                self.custom_python_path.set(python_paths[0])
+        else:
+            self.python_path_combo['values'] = []
+            self.python_path_combo.set("未找到 Python")
+
+    def _on_python_selected(self, event):
+        """用户从下拉框选择 Python 路径时调用"""
+        selected = self.python_path_combo.get()
+        if selected and os.path.exists(selected):
+            self.custom_python_path.set(selected)
+            self._save_python_config()
+            self._test_python()
+            self._update_python_btn()
+
     def _get_python(self):
-        """获取有效的 Python 解释器路径（打包环境下不返回 exe 自身）"""
-        # 打包环境：强制使用系统 Python
-        if getattr(sys, 'frozen', False):
+        """获取有效的 Python 解释器路径"""
+
+        # 统一使用 ExePathManager.is_frozen() 判断打包环境
+        is_frozen = ExePathManager.is_frozen()
+
+        # 打包环境
+        if is_frozen:
+            # 1. 优先使用用户手动指定的路径
             custom = self.custom_python_path.get()
             if custom and os.path.exists(custom):
-                exe_name = 'python.exe' if sys.platform == 'win32' else 'python'
-                if os.path.basename(custom).lower() == exe_name:
-                    if 'common_venv' in custom.lower():
-                        self.safe_log(f"⚠️ 手动指定的路径是虚拟环境，已排除: {custom}")
+                if custom.lower().endswith('python.exe'):
+                    if ExePathManager.is_temp_directory(custom):
+                        self.safe_log(f"⚠️ 路径在临时目录，无效: {custom}")
+                    elif os.path.abspath(custom).lower() == os.path.abspath(sys.executable).lower():
+                        self.safe_log(f"⚠️ 路径指向程序自身，无效: {custom}")
                     else:
-                        # 关键：检查是否指向 exe 自身
-                        if os.path.abspath(custom).lower() == os.path.abspath(sys.executable).lower():
-                            self.safe_log(f"⚠️ 手动指定的路径是程序自身，已排除: {custom}")
-                        else:
-                            return custom
+                        return custom
                 else:
-                    self.safe_log(f"⚠️ 手动指定的路径不是 {exe_name}: {custom}")
+                    self.safe_log(f"⚠️ 路径不是 python.exe: {custom}")
 
-            # 手动遍历 PATH，只找 python，排除 common_venv 和 exe 自身
-            exe_name = 'python.exe' if sys.platform == 'win32' else 'python'
-            current_exe = os.path.abspath(sys.executable).lower()
-            for d in os.environ.get("PATH", "").split(os.pathsep):
-                full = os.path.join(d, exe_name)
-                if os.path.exists(full):
-                    full_lower = full.lower()
-                    if 'common_venv' not in full_lower and full_lower != current_exe:
-                        return full
+            # 2. 使用系统命令查找
+            system_python = self._find_system_python_by_cmd()
+            if system_python:
+                if not ExePathManager.is_temp_directory(system_python):
+                    #self.safe_log(f"✅ 通过系统命令找到 Python: {system_python}")
+                    self.root.after(0, lambda: self._set_python_path(system_python))
+                    return system_python
 
-            # 使用 glob 匹配通配符
-            import glob
-            patterns = []
-            if sys.platform == 'win32':
-                patterns = [
-                    r"C:\Python31*\python.exe",
-                    r"D:\Python31*\python.exe",
-                    r"C:\Python\Python3*\python.exe",
-                    r"D:\Python\Python3*\python.exe",
-                    os.path.expanduser(r"~\AppData\Local\Programs\Python\Python31*\python.exe"),
-                ]
-            else:
-                patterns = [
-                    "/usr/bin/python3",
-                    "/usr/local/bin/python3",
-                    "/usr/bin/python",
-                    "/usr/local/bin/python",
-                ]
-
-            for pattern in patterns:
-                if '*' in pattern:
-                    for path in glob.glob(pattern):
-                        if os.path.exists(path):
-                            path_lower = path.lower()
-                            if 'common_venv' not in path_lower and path_lower != current_exe:
-                                return path
-                else:
-                    if os.path.exists(pattern):
-                        path_lower = pattern.lower()
-                        if 'common_venv' not in path_lower and path_lower != current_exe:
-                            return pattern
-
+            # 3. 都没找到，提示用户
+            self.safe_log("❌ 未找到系统 Python，请手动指定 python.exe 路径")
             return None
 
-        # 开发环境：正常逻辑
+        # 开发环境：正常自动检测
         if self.use_venv:
             vp = self._get_venv_python()
             if vp and os.path.exists(vp) and 'common_venv' not in vp.lower():
@@ -1665,13 +2509,13 @@ class PackageGUI:
         if sys.executable and 'common_venv' not in sys.executable.lower():
             return sys.executable
 
+        # 开发环境备选路径
         default_paths = []
         if sys.platform == 'win32':
-            default_paths = [
-                r"c:\python\python312\python.exe",
-                r"d:\02python\python\python.exe",
-                os.path.expanduser(r"~\appdata\local\programs\python\python312\python.exe")
-            ]
+            for version in ["313", "312", "311", "310"]:
+                default_paths.append(f"C:\\Python{version}\\python.exe")
+                default_paths.append(f"D:\\Python{version}\\python.exe")
+            default_paths.append(os.path.expanduser(r"~\AppData\Local\Programs\Python\Python312\python.exe"))
         else:
             default_paths = ["/usr/bin/python3", "/usr/local/bin/python3"]
 
@@ -1679,6 +2523,72 @@ class PackageGUI:
             if os.path.exists(p) and 'common_venv' not in p.lower():
                 return p
         return None
+
+    def _update_python_btn_state(self):
+        """根据 Python 路径状态更新按钮颜色"""
+        current_path = self.custom_python_path.get()
+
+        if not current_path or not os.path.exists(current_path):
+            # 路径为空或不存在：变黄
+            self.test_python_btn.config(bg="#ff9800", fg="#ffffff")
+            self.test_python_btn.normal_bg = "#ff9800"
+            self.test_python_btn.hover_bg = "#ffa726"
+            self.py_label.config(text="请选择Python路径", foreground="orange")
+        else:
+            # 路径存在，恢复默认颜色
+            self.test_python_btn.config(bg="#4a8dd9", fg="#ffffff")
+            self.test_python_btn.normal_bg = "#4a8dd9"
+            self.test_python_btn.hover_bg = "#5a9de9"
+           
+    def _set_python_test_result(self, success, message, color="green"):
+        """设置 Python 测试结果显示"""
+        if success:
+            self.py_label.config(text=message, foreground=color)
+            # 测试成功：恢复系统默认颜色
+            self.test_python_btn.config(bg="#e8ecf1", fg="#333333")
+            self.test_python_btn.normal_bg = "#e8ecf1"
+            self.test_python_btn.hover_bg = "#4a8dd9"
+        else:
+            self.py_label.config(text=message, foreground="red")
+            # 测试失败：按钮变红
+            self.test_python_btn.config(bg="#f44336", fg="#ffffff")
+            self.test_python_btn.normal_bg = "#f44336"
+            self.test_python_btn.hover_bg = "#e57373"
+
+    def _update_python_ui_state(self):
+        """根据当前 Python 路径更新测试按钮颜色"""
+        current_path = self.custom_python_path.get()
+
+        if not current_path:
+            # 路径为空：按钮变黄
+            self.test_python_btn.config(bg="#ff9800", fg="#ffffff")
+            self.test_python_btn.normal_bg = "#ff9800"
+            self.test_python_btn.hover_bg = "#ffa726"
+            return
+
+        if not os.path.exists(current_path):
+            # 路径不存在：按钮变黄
+            self.test_python_btn.config(bg="#ff9800", fg="#ffffff")
+            self.test_python_btn.normal_bg = "#ff9800"
+            self.test_python_btn.hover_bg = "#ffa726"
+            return
+
+        if not current_path.lower().endswith('python.exe'):
+            # 路径不是 python.exe：按钮变红
+            self.test_python_btn.config(bg="#f44336", fg="#ffffff")
+            self.test_python_btn.normal_bg = "#f44336"
+            self.test_python_btn.hover_bg = "#e57373"
+            return
+
+        # 路径有效：恢复默认颜色
+        self.test_python_btn.config(bg="#e8ecf1", fg="#333333")
+        self.test_python_btn.normal_bg = "#e8ecf1"
+        self.test_python_btn.hover_bg = "#4a8dd9"
+
+    def _on_python_path_change(self, *args):
+        """Python 路径变化时更新 UI"""
+        self._update_python_ui_state()
+
     def _get_venv_python(self):
         """获取虚拟环境中的 Python 路径（跨平台）"""
         venv_dir = os.path.join(self.current_dir, "common_venv")
@@ -1690,26 +2600,23 @@ class PackageGUI:
 
     def _auto_detect_python(self):
         """自动检测系统Python"""
-        # 打包环境判断（兼容 PyInstaller 和 Nuitka）
-        is_frozen = getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS')
-
-        if is_frozen:
-            return None  # 打包环境直接返回 None，不检测
-
-        # 开发环境：正常检测
+        # 使用 ExePathManager 判断打包环境
+        if ExePathManager.is_frozen():
+            return None
         return self._get_python()
-    
+
     def _async_find_python(self):
         """后台线程查找Python"""
-
         python_path = self._auto_detect_python()
 
-        # 只在开发环境且没有设置过Python路径时才自动设置
         if python_path and not self.custom_python_path.get():
-            # 再次确认路径有效
-            if os.path.exists(python_path):
+            if ExePathManager.is_temp_directory(python_path):
+                return
+            if ExePathManager.is_frozen():
+                if python_path.lower().endswith('python.exe') and 'common_venv' not in python_path.lower():
+                    self.root.after(0, lambda: self._set_python_path(python_path))
+            else:
                 self.root.after(0, lambda: self._set_python_path(python_path))
-                self.safe_log(f"✅ 自动检测到Python: {python_path}")
 
     def _check_pyinstaller(self):
         py = self._get_python()
@@ -1732,29 +2639,69 @@ class PackageGUI:
             return py, "检测失败"
 
     def _detect_msvc(self):
+        """检测 MSVC 编译器（跨平台）"""
+        if sys.platform != "win32":
+            return False
+
+        # 方法1: 通过 vswhere 检测 Visual Studio
         for v in [r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe",
                   r"C:\Program Files\Microsoft Visual Studio\Installer\vswhere.exe"]:
             if os.path.exists(v):
                 try:
                     r = subprocess.run([v, "-latest", "-property", "installationPath"],
-                                    capture_output=True, text=True, timeout=5, startupinfo=get_startupinfo())
-                    if r.returncode == 0 and r.stdout.strip(): return True
-                except: pass
+                                       capture_output=True, text=True, timeout=5, startupinfo=get_startupinfo())
+                    if r.returncode == 0 and r.stdout.strip():
+                        return True
+                except:
+                    pass
+
+        # 方法2: 查找 cl.exe，排除 MinGW/MSYS 目录
         try:
             r = subprocess.run(["where", "cl.exe"], capture_output=True, text=True, timeout=3,
-                              startupinfo=get_startupinfo())
-            return r.returncode == 0
-        except: return False
+                               startupinfo=get_startupinfo())
+            if r.returncode == 0:
+                paths = r.stdout.strip().split('\n')
+                for path in paths:
+                    path_lower = path.lower()
+                    # 排除 MinGW/MSYS 目录
+                    if 'mingw' in path_lower or 'msys' in path_lower:
+                        continue
+                    if os.path.exists(path):
+                        return True
+        except:
+            pass
+
+        return False
 
     def _detect_mingw(self):
+        """检测 MinGW64 编译器（跨平台）"""
         import shutil
+
+        # 方法1: 通过 PATH 查找 gcc
         gcc = shutil.which("gcc")
-        if gcc: return True, os.path.dirname(gcc)
+        if gcc:
+            # 排除 MSVC 的 cl 伪装（非 Windows 不检查）
+            if sys.platform == "win32":
+                gcc_lower = gcc.lower()
+                if 'mingw' in gcc_lower or 'msys' in gcc_lower:
+                    return True, os.path.dirname(gcc)
+                # 如果没有 mingw 特征，但确实是 gcc，也认为是 MinGW
+                return True, os.path.dirname(gcc)
+            else:
+                # Linux/Mac 下 gcc 就是 GCC
+                return True, os.path.dirname(gcc)
+
+        # 方法2: 检查 tools 目录
         td = os.path.join(self.current_dir, "tools")
         if os.path.exists(td):
             for root, dirs, files in os.walk(td):
                 if "gcc.exe" in files:
                     return True, os.path.dirname(os.path.join(root, "gcc.exe"))
+                # 检查 mingw64/bin 目录
+                if "mingw64" in dirs:
+                    mingw_bin = os.path.join(root, "mingw64", "bin")
+                    if os.path.exists(os.path.join(mingw_bin, "gcc.exe")):
+                        return True, mingw_bin
         return False, None
 
     def _update_compiler_status(self):
@@ -1764,13 +2711,20 @@ class PackageGUI:
             self.has_msvc = False
         if not hasattr(self, 'has_mingw'):
             self.has_mingw = False
+
         if b == "MinGW64":
             t, c = (("✓ MinGW64 已就绪", "green") if self.has_mingw else ("❌ MinGW64 未安装", "red"))
         elif b == "MSVC":
             t, c = (("✓ MSVC 已就绪", "green") if self.has_msvc else ("❌ MSVC 未安装", "red"))
-        else:
-            t, c = (("✓ 将使用 MSVC", "green") if self.has_msvc else
-                    (("✓ 将使用 MinGW64", "green") if self.has_mingw else ("⚠️ 将自动下载编译器", "orange")))
+        else:  # auto 模式
+            # 优先显示 MinGW64
+            if self.has_mingw:
+                t, c = ("✓  MinGW64", "green")
+            elif self.has_msvc:
+                t, c = ("✓  MSVC", "green")
+            else:
+                t, c = ("⚠️ 将自动下载 MinGW64", "orange")
+
         self.compiler_label.config(text=t, foreground=c)
 
     def _toggle_help_about(self):
@@ -1938,6 +2892,51 @@ class PackageGUI:
             return imports
         except: return set()
 
+    def is_standard_module(module_name):
+        """动态检测 + 预制列表结合判断标准库"""
+        import importlib.util
+
+        # 方法1: 动态检测模块位置
+        try:
+            spec = importlib.util.find_spec(module_name)
+            if spec and spec.origin:
+                # 标准库不在 site-packages 中
+                if 'site-packages' not in spec.origin and 'dist-packages' not in spec.origin:
+                    return True
+        except:
+            pass
+
+        # 方法2: Python 3.10+ 内置标准库列表
+        if hasattr(sys, 'stdlib_module_names'):
+            if module_name in sys.stdlib_module_names:
+                return True
+
+        # 方法3: 回退到预制列表（作为兜底）
+        return module_name in STANDARD_LIBS
+
+    def _get_package_name_from_module(self, module_name):
+        """通过 pip 获取模块对应的包名（动态检测）"""
+        import subprocess
+
+        py = self._get_python()
+        if not py:
+            return MODULE_TO_PACKAGE.get(module_name, module_name)
+
+        try:
+            # 使用 pip show 查询
+            r = subprocess.run([py, "-m", "pip", "show", module_name],
+                               capture_output=True, text=True, timeout=5,
+                               startupinfo=get_startupinfo() if sys.platform == "win32" else None)
+            if r.returncode == 0:
+                for line in r.stdout.split('\n'):
+                    if line.startswith('Name:'):
+                        return line.split(':', 1)[1].strip().lower()
+        except:
+            pass
+
+        # 回退到映射表
+        return MODULE_TO_PACKAGE.get(module_name, module_name)
+
     def _analyze_used(self, show_log=True, auto_add=True):
         f = self.input_path.get()
         if not f or not os.path.exists(f):
@@ -1945,26 +2944,67 @@ class PackageGUI:
                 self.safe_log("⚠️ 未选择有效的Python文件")
             return set()
 
-        try:
-            with open(f, "r", encoding="utf-8") as fobj:
-                imports = self._parse_imports(fobj.read())
-        except Exception as e:
+        all_imports = set()
+
+        # ========== 自动判断：文件还是文件夹 ==========
+        if os.path.isdir(f):
+            # 文件夹模式：扫描所有 py 文件
+            exclude_dirs = {"venv", "common_venv", "__pycache__", ".venv", "env", "dist", "build", "lib", "include",
+                            "bin", "Scripts"}
+            py_files = []
+            for root, dirs, files in os.walk(f):
+                dirs[:] = [d for d in dirs if d not in exclude_dirs]
+                for file in files:
+                    if file.endswith(".py"):
+                        py_files.append(os.path.join(root, file))
+
             if show_log:
-                self.safe_log(f"❌ 分析失败: {e}")
-            return set()
+                self.safe_log(f"📁 扫描到 {len(py_files)} 个 Python 文件")
+
+            for pf in py_files:
+                try:
+                    with open(pf, "r", encoding="utf-8") as fobj:
+                        content = fobj.read()
+                    imports = self._parse_imports(content)
+                    all_imports.update(imports)
+                except Exception as e:
+                    if show_log:
+                        self.safe_log(f"   ⚠️ 分析 {os.path.basename(pf)} 失败: {e}")
+        else:
+            # 单文件模式
+            try:
+                with open(f, "r", encoding="utf-8") as fobj:
+                    content = fobj.read()
+                all_imports = self._parse_imports(content)
+            except Exception as e:
+                if show_log:
+                    self.safe_log(f"❌ 分析失败: {e}")
+                return set()
+        # ============================================
 
         d = os.path.dirname(f)
         local = {f[:-3].lower() for f in os.listdir(d) if f.endswith(".py")}
 
-        STANDARD_LIBS_EXCEPT_TK = STANDARD_LIBS - {"tkinter"}
+        def is_standard_module(module_name):
+            import importlib.util
+            try:
+                spec = importlib.util.find_spec(module_name)
+                if spec and spec.origin:
+                    if 'site-packages' not in spec.origin and 'dist-packages' not in spec.origin:
+                        return True
+            except:
+                pass
+            if hasattr(sys, 'stdlib_module_names'):
+                if module_name in sys.stdlib_module_names:
+                    return True
+            return module_name in STANDARD_LIBS
 
         third_dict = {}
         has_tk = False
 
-        for imp in imports:
+        for imp in all_imports:
             il = imp.lower()
 
-            # ✅ 不管是 tk 还是 tkinter，都当成 tk
             if il in ("tk", "tkinter"):
                 has_tk = True
                 continue
@@ -1972,17 +3012,16 @@ class PackageGUI:
             if il in local:
                 continue
 
-            pkg_name = MODULE_TO_PACKAGE.get(imp, imp)
-
-            if pkg_name.lower() in STANDARD_LIBS_EXCEPT_TK:
+            if is_standard_module(il):
                 continue
+
+            pkg_name = MODULE_TO_PACKAGE.get(imp, imp)
 
             if pkg_name not in third_dict:
                 third_dict[pkg_name] = imp
 
         third = list(third_dict.values())
 
-        # ✅ 兜底：列表里只能是 tk
         if has_tk and "tk" not in third:
             third.append("tk")
 
@@ -2024,14 +3063,13 @@ class PackageGUI:
                         self.safe_log(f"💡 其中 {pending} 个模块尚未导入，点击'⚡ 自动导入'按钮添加")
 
             else:
-                if "tk" in third:
+                if has_tk:
                     self.safe_log("📊 分析完成，仅检测到 1 个 tk（标准库）")
                 else:
                     self.safe_log("📊 分析完成，未发现第三方模块依赖")
 
         return set(third)
-
-
+    
     def _analyze_missing(self):
         f = self.input_path.get()
         if not f:
@@ -2164,35 +3202,78 @@ class PackageGUI:
         self.adv_visible = not self.adv_visible
 
     def _on_drop(self, event):
-        files = event.data
-        if sys.platform == "win32":
-            files = files.strip("{}").replace('"', "").split()[0]
-        else:
-            files = files.split()[0]
-            if files.startswith("file://"):
-                files = files[7:]
+        """通用拖拽处理"""
+        self._clear_all()
+        files = self.parse_drop_path(event.data)
+
         if not files or not os.path.exists(files):
             return
+
+        is_valid, error_msg = validate_path(files)
+        if not is_valid:
+            messagebox.showwarning("路径无效", error_msg)
+            return
+
         if os.path.isfile(files) and files.lower().endswith(".py"):
-            base = os.path.basename(files).replace(" ", "")
-            safe = os.path.join(os.path.dirname(files), base)
-            if safe != files:
-                try:
-                    os.rename(files, safe)
-                    files = safe
-                except: pass
+            # 拖入的是 .py 文件
+            base = os.path.basename(files)
             self.input_path.set(files)
-            self.output_name.set(os.path.splitext(base)[0].replace(" ", ""))
-            self.safe_log(f"📁 拖拽Python文件: {self.output_name.get()}")
-            #if self.multi_switch.get():
-                #self._inject_single_instance(files)
+            self.output_name.set(self.strip_py_ext(base))
+
+            # ========== 新增：重置版本信息，使用新的文件名 ==========
+            self._version_info_ready = False
+            if hasattr(self, 'version_info') and self.version_info:
+                self.version_info["ProductName"] = self.output_name.get()
+                self._save_version_config()
+
+            # 重新分析依赖
+            threading.Thread(target=lambda: self._analyze_used(show_log=True, auto_add=True), daemon=True).start()
+            self.safe_log(f"📁 拖拽Python文件: {base}")
+
         elif os.path.isdir(files):
-            self.input_path.set(files)
-            self.output_name.set(os.path.basename(files).replace(" ", ""))
-            self.safe_log(f"📁 拖拽文件夹: {self.output_name.get()}")
+            # 拖入的是文件夹
+            py_files = self._collect_files_recursive(files, "*.py")
+
+            if not py_files:
+                messagebox.showwarning("未找到Python文件", f"文件夹内未找到 .py 文件：\n{files}")
+                return
+
+            # 找主文件
+            main_names = {"main.py", "app.py", "run.py", "index.py", "start.py", "manage.py"}
+            main_file = None
+            for f in py_files:
+                if os.path.basename(f).lower() in main_names:
+                    main_file = f
+                    break
+
+            target = main_file or py_files[0]
+            base = os.path.basename(target)
+            self.input_path.set(target)
+            self.output_name.set(self.strip_py_ext(base))
+
+           
+            self._version_info_ready = False
+            if hasattr(self, 'version_info') and self.version_info:
+                self.version_info["ProductName"] = self.output_name.get()
+                self._save_version_config()
+
+            hint = "主文件" if main_file else "首个Python文件"
+            threading.Thread(target=lambda: self._analyze_used(show_log=True, auto_add=True), daemon=True).start()
+            self.safe_log(f"📁 拖拽文件夹，自动识别{hint}: {base}")
+
             entry = self._find_entry(files)
             if entry and self.multi_switch.get():
                 self._inject_single_instance(entry)
+
+    def _set_input(self, path, log_msg):
+        """统一设置输入路径和输出名"""
+        base = os.path.basename(path)
+        self.input_path.set(path)
+        self.output_name.set(self.strip_py_ext(base))
+        self.safe_log(log_msg)
+        # 同步版本信息中的产品名称
+        self._sync_version_product_name()
+        self.safe_log(log_msg)
 
     def _find_entry(self, path):
         for e in ["main.py", "__main__.py", "run.py", "app.py", "launcher.py"]:
@@ -2236,23 +3317,25 @@ class PackageGUI:
                 self._upx_auto_find_done = True
                 threading.Thread(target=self._async_find_upx, daemon=True).start()
         else:
-            # 关闭开关时，不清空保存的路径，只是UI上显示为空（打包时不使用）
-            # 但为了UI体验，暂时清空显示，保存的配置不变
+            # 关闭开关时，不清空保存的路径，保存的配置不变
             self.upx_path.set("")
 
     def _on_workdir_switch(self, value):
         """工作目录开关：开启时注入工作目录代码，关闭时不注入"""
         self.workdir_enabled = value
+        input_file = self.input_path.get()
+
         if value:
-           self.safe_log("📁 已启用工作目录切换（exe将在所在目录运行）")
+           self.safe_log("📁 路径设置已启用（打包时将自动注入）")
         else:
-            self.safe_log("📁 已禁用工作目录切换（exe将在临时目录运行）")
+            if self._remove_workdir_code(input_file):
+                self.safe_log("🔓 已移除路径设置代码")
 
     def multi_instance_switch(self, value):
         """防多开开关：开启时记录状态，关闭时立即移除"""
         self.multi_instance_enabled = value
-
         input_file = self.input_path.get()
+
         if not input_file or not os.path.exists(input_file):
             if value:
                 self.safe_log("⚠️ 请先选择文件，再开启防多开开关")
@@ -2436,14 +3519,21 @@ except:
     def _get_packer_version_sync(self, packer_name, pip_name):
         """同步获取单个打包器版本（打包环境也允许检测系统Python）"""
         py = self._get_python()
-        if not py:
+
+        # 如果获取到的 py 无效，尝试从 PATH 查找系统 Python
+        if not py or not os.path.exists(py):
+            import shutil
+            py = shutil.which("python.exe")
+            if not py:
+                return None
+
+        # 排除临时目录（Nuitka 解压目录）
+        if 'temp' in py.lower() or 'onefile' in py.lower():
             return None
 
         # 打包环境下，确保获取的不是exe自身
         if getattr(sys, 'frozen', False):
-            if not py or not os.path.exists(py):
-                return None
-            if py.lower().endswith('.exe') and os.path.abspath(py).lower() == os.path.abspath(sys.executable).lower():
+            if os.path.abspath(py).lower() == os.path.abspath(sys.executable).lower():
                 return None
 
         try:
@@ -2511,11 +3601,11 @@ except:
             # ===================================================
 
             self.safe_log(
-                "📌 Nuitka 模式：编译优化，体积小，需要 C 编译器。打包参数:\n    "
+                "📌 Nuitka 模式：编译优化，体积小，需要 C 编译器。常用参数:\n    "
                 + " ".join([
                     "python -m nuitka ",
-                    "--standalone ",
                     "--onefile ",
+                    "--standalone ",
                     "--windows-disable-console ",
                     "--include-data-dir=images=images ",
                     "--plugin-enable=pylint-warnings ",
@@ -2567,9 +3657,11 @@ except:
         if not self.nuitka_compat_mode.get():
             self.nuitka_compat_mode.set(True)
             self.safe_log(f"⚠️ 检测到 Nuitka {version}，已自动启用兼容模式")
+            #self.safe_log("💡 后端 auto 模式，将自动检测可用编译器")
             self.safe_log("   - --standalone → --deployment")
             self.safe_log("   - --windows-disable-console → --windows-console-mode=disable")
-            self.safe_log("   - --windows-icon-from-ico → --windows-icon")
+            #self.safe_log("   - --windows-icon-from-ico → --windows-icon")
+    
     def _next_theme(self):
         self.theme_manager.next()
 
@@ -2577,15 +3669,22 @@ except:
         f = filedialog.askopenfilename(title="选择Python文件", filetypes=[("Python", "*.py")],
                                        initialdir=self.current_dir)
         if f:
-            self.input_path.set(f)
-            self.output_name.set(self._get_default_name())
-
-            # 清空项目配置（快速，不阻塞）
             self._clear_all()
+            self.input_path.set(f)
+            self.output_name.set(self.strip_py_ext(os.path.basename(f)))
+
+            # ========== 新增：重置版本信息，使用新的文件名 ==========
+            # 重置版本信息标志，让下次打开弹窗时使用新的默认值
+            self._version_info_ready = False
+            # 不清空 version_info，但标记为需要更新
+            # 可选：自动更新产品名称为新的输出名称
+            if hasattr(self, 'version_info') and self.version_info:
+                # 只更新产品名称，保留其他设置
+                self.version_info["ProductName"] = self.output_name.get()
+                self._save_version_config()
 
             # 异步加载项目配置
             threading.Thread(target=self._async_load_config, daemon=True).start()
-
             # 异步分析依赖
             threading.Thread(target=lambda: self._analyze_used(show_log=True), daemon=True).start()
 
@@ -2599,7 +3698,7 @@ except:
     def _select_output(self):
         d = filedialog.askdirectory(initialdir=self.output_path.get() if os.path.exists(self.output_path.get()) else self.current_dir)
         if d: self.output_path.set(d)
-
+    
     def _select_icon(self):
         f = filedialog.askopenfilename(filetypes=[("Icons", "*.ico")])
         if f:
@@ -2652,9 +3751,11 @@ except:
             self._save_python_config()
             self._test_python()
             self._update_python_btn()
+            self._update_python_btn()
 
     def _test_python(self):
         """测试Python版本（后台执行）"""
+        self.clear_log()
         p = self._get_python()
 
         # 打包环境：拒绝不以 python.exe 结尾的路径，拒绝 exe 自身
@@ -2696,7 +3797,7 @@ except:
             except Exception as e:
                 self.root.after(0, lambda: self.py_label.config(text="测试失败", foreground="red"))
                 self.safe_log(f"❌ 测试失败: {e}")
-
+        self.safe_log(f"✅ 自动找到 Python: {p}")
         threading.Thread(target=test, daemon=True).start()
 
     def _save_python_path_to_cache(self, path):
@@ -2712,7 +3813,7 @@ except:
 
         # 更新变量
         self.custom_python_path.set(path)
-
+        self.custom_python_path.trace_add('write', self._on_python_path_change)
         # 保存到全局缓存
         self.global_cache['python'] = {
             'path': path,
@@ -2732,7 +3833,8 @@ except:
 
     def _clear_python(self):
         """智能清除/切换：如果是 common_venv 则切换，否则清除"""
-        if self.clear_switch_python_btn.cget("text") == "切换":
+        self.clear_log()
+        if self.clear_switch_python_btn.cget("text") == "🔄切换":
             # 切换逻辑：弹出文件选择对话框，让用户自由选择 Python 解释器
             new_py = filedialog.askopenfilename(
                 title="选择 Python 解释器（可选择虚拟环境或系统 Python）",
@@ -2898,8 +4000,9 @@ except:
         """左侧依赖导入列表变化时，更新自动导入计数器"""
         n = len(self.hidden_imports_list)
         self.hidden_num.config(text=f"({n})", foreground="green" if n > 0 else "gray")
-        # 更新自动导入计数器（因为左侧列表变化了）
+        # 更新自动导入计数器
         self._update_auto_import_count()
+
     def _analyze_deps(self):
         f = self.input_path.get()
         if not f or not os.path.exists(f):
@@ -3079,6 +4182,15 @@ except:
         if messagebox.askyesno("确认安装", f"发现 {len(need)} 个未安装包，是否安装？"):
             self._batch_install(need)
 
+    def _stop_venv(self):
+        """停止虚拟环境创建"""
+        self.stop_venv = True
+        if self.venv_process and self.venv_process.poll() is None:
+            self.venv_process.terminate()
+            self.safe_log("🛑 用户停止虚拟环境创建")
+        # 恢复打包按钮
+        self.pack_btn.config(text="▶开始打包", command=self._toggle_pack)
+        
     def _manage_venv(self, silent=False):
         f = self.input_path.get()
         if not f or not os.path.exists(f):
@@ -3088,6 +4200,12 @@ except:
         if not silent:
             if not messagebox.askyesno("虚拟环境", "将创建/更新虚拟环境，是否继续？"):
                 return
+        # 重置停止标志
+        self.stop_venv = False
+    
+        # 显示停止按钮
+        self.pack_btn.config(text="⏹停止创建", command=self._stop_venv)
+
         # 显示彩色进度条
         self.status_start("虚拟环境", color="blue")
         threading.Thread(target=self._do_manage_venv, daemon=True).start()
@@ -3147,6 +4265,7 @@ except:
             return alt_site
 
         return None
+
     def _is_packed_exe(self):
         """判断是否在打包的 exe 中运行"""
         return getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS') or getattr(sys, 'nuitka_is_frozen', False)
@@ -3159,8 +4278,6 @@ except:
         main_py = self._get_python()
         self.safe_log(f"   venv_dir: {venv_dir}")
         self.safe_log(f"   modules: {modules}")
-
-
 
         if not main_py:
             #self.safe_log("❌ 未找到主环境 Python")
@@ -3303,6 +4420,7 @@ except:
             py = self._get_python()
             if not py:
                 self.safe_log("❌ 未找到系统 Python，无法创建虚拟环境")
+                self.status_finish("失败")
                 return
 
             self.safe_log("=" * 50)
@@ -3310,20 +4428,49 @@ except:
 
             # 使用重命名删除旧环境（瞬间完成，跨平台）
             if os.path.exists(venv_dir):
+                if self.stop_venv:
+                    self.safe_log("🛑 用户取消操作")
+                    self.status_finish("已取消")
+                    return
                 self.safe_log("🗑️删除旧环境...")
                 self.status_set_target(10, "删除旧环境", color="orange")
                 self._rename_and_delete(venv_dir)
+
+            if self.stop_venv:
+                self.safe_log("🛑 用户取消操作")
+                self.status_finish("已取消")
+                return
 
             self.status_set_target(20, "创建虚拟环境", color="blue")
             self.safe_log("🔧 创建虚拟环境...")
 
             # 创建虚拟环境（跨平台）
-            r = subprocess.run([py, "-m", "venv", venv_dir], capture_output=True, text=True,
-                               timeout=120, startupinfo=get_startupinfo() if sys.platform == "win32" else None)
-            if r.returncode != 0:
-                self.safe_log(f"❌ 创建失败: {r.stderr}")
-                return
+            self.venv_process = subprocess.Popen(
+                [py, "-m", "venv", venv_dir],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+                startupinfo=get_startupinfo() if sys.platform == "win32" else None
+            )
 
+            # 等待进程完成，同时检查停止标志
+            if self.venv_process:
+                while self.venv_process.poll() is None:
+                    if self.stop_venv:
+                        self.venv_process.terminate()
+                        self.safe_log("🛑 用户停止虚拟环境创建")
+                        self.venv_process = None
+                        self.status_finish("已停止")
+                        return
+                    time.sleep(0.2)
+
+                if self.venv_process.returncode != 0:
+                    error_msg = self.venv_process.stderr.read() if self.venv_process.stderr else "未知错误"
+                    self.safe_log(f"❌ 创建失败: {error_msg}")
+                    self.venv_process = None
+                    self.status_finish("创建失败")
+                    return
+
+            self.venv_process = None
             self.safe_log("✅ 虚拟环境创建成功")
 
             # 获取虚拟环境中的 Python 路径（跨平台）
@@ -3371,6 +4518,11 @@ except:
                     new_fail_list = []
 
                     for i, pkg in enumerate(fail_list):
+                        if self.stop_venv:
+                            self.safe_log("🛑 用户取消安装")
+                            self.status_finish("已取消")
+                            return
+
                         pct = 60 + int((i + 1) / total * 35)
                         self.status_set_target(pct, f"pip 安装 {pkg} ({i+1}/{total})", color="orange")
                         self.safe_log(f"📥 pip 安装 {pkg} ({i+1}/{total})...")
@@ -3407,6 +4559,12 @@ except:
         except Exception as e:
             self.safe_log(f"❌ 管理失败: {e}")
             self.status_set_target(100, "管理失败", color="red")
+            self.status_finish("失败")
+        finally:
+            # 恢复按钮
+            self.root.after(0, lambda: self.pack_btn.config(text="▶开始打包", command=self._toggle_pack))
+            self.stop_venv = False
+            self.venv_process = None
 
     def _launch_auto(self):
         try:
@@ -3458,6 +4616,7 @@ except:
         """计数器3：依赖数据 - 显示右侧数据文件列表数量"""
         n = len(self.data_files_list)
         self.adv_count.config(text=f"({n})", foreground="green" if n > 0 else "gray")
+
     def _open_proj_dir(self):
         out = os.path.join(self.output_path.get(), self.output_name.get().replace(" ", "_"))
         if not os.path.exists(out):
@@ -3526,7 +4685,10 @@ except:
         self.rec_label.config(text="")
         self.icon_path.set("")
         self.icon_label.config(text="")
-        #self.upx_path.set("")
+        # 更新计数显示
+        self._update_hidden_count()
+        self._update_data_count()
+        self._update_exclude_count()
 
     def clear_hidden_imports(self):
         self.hidden_imports_list.clear()
@@ -3557,6 +4719,13 @@ except:
             self._stop_pack()
 
     def _start_pack(self):
+        # 关闭可能还开着的弹窗
+        for widget in self.root.winfo_children():
+            if isinstance(widget, tk.Toplevel):
+                title = widget.title()
+                if "版本信息" in title or "图标制作" in title:
+                    widget.destroy()
+
         self.clear_log()
         if self.exclude_visible:
             self._toggle_exclude()
@@ -3624,10 +4793,14 @@ except:
         if self.process and self.process is not None and self.process.poll() is None:
             self.process.terminate()
             self.safe_log("🛑 用户停止打包")
-        
-        #清理注入的代码
-        self._cleanup_injected_codes()
 
+        # 同时停止虚拟环境创建
+        self.stop_venv = True
+        if self.venv_process and self.venv_process.poll() is None:
+            self.venv_process.terminate()
+            self.safe_log("🛑 用户停止虚拟环境创建")
+
+        self._cleanup_injected_codes()
         self._pack_finish()
 
     def _pack_finish(self):
@@ -3661,7 +4834,6 @@ except:
     def _run_package(self):
         try:
             success = self._package_app()
-        
             if success:
                 self.safe_log("✅ 打包成功")
             else:
@@ -3851,13 +5023,16 @@ if os.path.exists(_ip):
             with open(source_file, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            # 检查前80行是否已有工作目录代码
-            first_80_lines = '\n'.join(content.split('\n')[:80])
-            if '# AUTO_INJECTED_WORKDIR' in first_80_lines:
+            # 检查前100行是否已有工作目录代码
+            first_100_lines = '\n'.join(content.split('\n')[:100])
+            if '# AUTO_INJECTED_WORKDIR' in first_100_lines:
                 return True
 
-            code = '''# AUTO_INJECTED_WORKDIR - 设置工作目录为exe所在目录
-import os, sys, tempfile, ctypes
+            code = '''# AUTO_INJECTED_WORKDIR - 设置为exe所在目录
+import os
+import sys
+import ctypes
+import tempfile
 
 class ExePathManager:
     @staticmethod
@@ -3867,51 +5042,71 @@ class ExePathManager:
             hasattr(sys, '_MEI_ARCHIVE'),
             getattr(sys, 'nuitka_is_frozen', False),
         ]
+        if not any(frozen_flags):
+            if sys.argv[0].lower().endswith('.exe'):
+                return True
+            if 'temp' in sys.executable.lower() or 'onefile' in sys.executable.lower():
+                return True
+            if sys.platform == 'win32':
+                try:
+                    buffer = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+                    ctypes.windll.kernel32.GetModuleFileNameW(
+                        ctypes.wintypes.HMODULE(0),
+                        buffer,
+                        ctypes.wintypes.MAX_PATH
+                    )
+                    exe_path = buffer.value
+                    if exe_path.lower().endswith('.exe'):
+                        return True
+                except:
+                    pass
         return any(frozen_flags)
 
     @staticmethod
     def get_real_exe_path() -> str:
         if not ExePathManager.is_frozen():
             return os.path.abspath(__file__)
-        try:
-            buffer = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
-            ctypes.windll.kernel32.GetModuleFileNameW(
-                ctypes.wintypes.HMODULE(0),
-                buffer,
-                ctypes.wintypes.MAX_PATH
-            )
-            real_path = buffer.value
-            if os.path.exists(real_path) and os.path.isfile(real_path):
-                return real_path
-        except:
-            pass
-        try:
-            if len(sys.argv) > 0:
-                path = os.path.abspath(sys.argv[0])
-                if os.path.exists(path):
-                    return path
-        except:
-            pass
-        return os.path.abspath(sys.executable)
+        if sys.platform == 'win32':
+            try:
+                buffer = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+                ctypes.windll.kernel32.GetModuleFileNameW(
+                    ctypes.wintypes.HMODULE(0),
+                    buffer,
+                    ctypes.wintypes.MAX_PATH
+                )
+                real_path = buffer.value
+                if os.path.exists(real_path) and os.path.isfile(real_path):
+                    return real_path
+            except:
+                pass
+        if hasattr(sys, '_MEIPASS'):
+            return sys.executable
+        return os.path.abspath(sys.argv[0])
 
     @staticmethod
     def get_exe_directory() -> str:
         return os.path.dirname(ExePathManager.get_real_exe_path())
 
+    @staticmethod
+    def is_temp_directory(path: str) -> bool:
+        temp_dirs = [
+            tempfile.gettempdir(),
+            os.path.join(os.environ.get('TEMP', ''), ''),
+            os.path.join(os.environ.get('TMP', ''), ''),
+        ]
+        abs_path = os.path.abspath(path)
+        return any(abs_path.startswith(temp_dir) for temp_dir in temp_dirs if temp_dir)
+
 if ExePathManager.is_frozen():
-  # 获取 exe 所在目录
-    if hasattr(sys, '_MEIPASS'):  # PyInstaller
-        exe_dir = os.path.dirname(sys.executable)
-    else:  # Nuitka
-        exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-    os.chdir(exe_dir)
-    #os.chdir(ExePathManager.get_exe_directory())
+    exe_dir = ExePathManager.get_exe_directory()
+    if os.path.exists(exe_dir):
+        os.chdir(exe_dir)
 # END AUTO_INJECTED_WORKDIR
 '''
             # 查找防多开代码的结束位置
             lines = content.split('\n')
             insert_pos = 0
-            for i, line in enumerate(lines[:80]):
+            for i, line in enumerate(lines[:100]):
                 if '# END GUARD' in line:
                     insert_pos = i + 1  # 插在 END GUARD 后面
                     break
@@ -3946,7 +5141,7 @@ if ExePathManager.is_frozen():
             return False
 
     def _remove_workdir_code(self, source_file):
-        """移除工作目录代码（前80行内查找）"""
+        """移除工作目录代码（前100行内查找）"""
         try:
             with open(source_file, "r", encoding="utf-8") as f:
                 lines = f.readlines()
@@ -3954,7 +5149,7 @@ if ExePathManager.is_frozen():
             start_idx = -1
             end_idx = -1
 
-            for i, line in enumerate(lines[:80]):
+            for i, line in enumerate(lines[:100]):
                 if '# AUTO_INJECTED_WORKDIR' in line:
                     start_idx = i
                 if start_idx != -1 and '# END AUTO_INJECTED_WORKDIR' in line:
@@ -3965,6 +5160,11 @@ if ExePathManager.is_frozen():
                 new_lines = lines[:start_idx] + lines[end_idx + 1:]
                 with open(source_file, "w", encoding="utf-8") as f:
                     f.writelines(new_lines)
+
+                self.workdir_switch.set(False)
+                self.workdir_enabled = False
+                #self.safe_log("🔓 已关闭工作目录开关") 
+   
                 return True
             return False
         except Exception as e:
@@ -3990,10 +5190,10 @@ if ExePathManager.is_frozen():
         if os.path.isdir(self.input_path.get()):
             cmd.append(f"--paths={self.input_path.get()}")
 
-        # ========== 强制包含所有隐藏导入模块 ==========
+        # 强制包含所有隐藏导入模块
         for imp in self.hidden_imports_list:
             cmd.append(f"--collect-all={imp}")
-            self.safe_log(f"📦 强制包含模块: {imp}")
+            self.safe_log(f"📦 包含模块: {imp}")
 
         # 如果虚拟环境开启，添加虚拟环境路径作为备用
         if self.use_venv:
@@ -4024,9 +5224,10 @@ if ExePathManager.is_frozen():
             cmd.append(f"--add-data={icon}{os.pathsep}.")
             self._inject_icon_code(input_file, icon)
 
-        vf = self._create_version_file()
-        if vf:
-            cmd.append(f"--version-file={vf}")
+        # ========== 版本信息 ==========
+        version_file = self._apply_version_to_pyinstaller(cmd)
+        if version_file:
+            self._temp_version_file = version_file  # 记录临时文件路径，打包后删除
 
         cmd.append(input_file)
         self.safe_log("🚀 开始 PyInstaller 打包...")
@@ -4044,15 +5245,15 @@ if ExePathManager.is_frozen():
             self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                             universal_newlines=True, bufsize=1, encoding="utf-8",
                                             errors="replace", startupinfo=get_startupinfo(),
-                                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform=="win32" else 0,
+                                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
                                             env=env)
 
-            # ========== PyInstaller 阶段配置（快速） ==========
+            # PyInstaller 阶段配置
             stage_config = {
                 "analyzing": {"interval": 1.0, "text": "分析脚本...", "min": 1, "max": 20},
-                "processing": {"interval": 1.0, "text": "处理资源...", "min": 21, "max": 50},
-                "building": {"interval": 1.0, "text": "构建中...", "min": 51, "max": 85},
-                "packaging": {"interval": 1, "text": "打包中...", "min": 86, "max": 95},
+                "processing": {"interval": 2.0, "text": "处理资源...", "min": 21, "max": 50},
+                "building": {"interval": 1.5, "text": "构建中...", "min": 51, "max": 85},
+                "packaging": {"interval": 1.0, "text": "打包中...", "min": 86, "max": 95},
             }
 
             current_stage = "analyzing"
@@ -4070,13 +5271,10 @@ if ExePathManager.is_frozen():
                     return
                 for line in iter(self.process.stdout.readline, ""):
                     if line.strip():
-                        # 真实输出到来，让虚假进度让位
                         self._stop_fake_progress()
-
                         self.safe_log(line.strip())
                         ll = line.lower()
 
-                        # 判断阶段变化
                         new_stage = current_stage
                         if "Module search" in ll:
                             new_stage = "analyzing"
@@ -4086,13 +5284,12 @@ if ExePathManager.is_frozen():
                             new_stage = "building"
                         elif "Disabling UPX" in ll:
                             new_stage = "packaging"
-                        elif "successfully" in ll or "Build complete" in ll:
+                        elif "Build complete" in ll:
                             self.progress_var.set(100)
                             self.progress_label.config(text="100% - 完成!")
                             self.root.update_idletasks()
                             continue
 
-                        # 阶段变化时启动新虚假进度
                         if new_stage != current_stage:
                             cfg = stage_config.get(new_stage, stage_config["analyzing"])
                             self._start_fake_progress(
@@ -4103,7 +5300,6 @@ if ExePathManager.is_frozen():
                             )
                             current_stage = new_stage
 
-                        # 解析真实进度（如果有百分比）
                         import re
                         match = re.search(r'(\d+)%', line)
                         if match:
@@ -4113,7 +5309,8 @@ if ExePathManager.is_frozen():
                                 self.progress_label.config(text=f"{pct}% - {current_stage}...")
                                 self.root.update_idletasks()
 
-                    if self.pack_btn["text"] == "▶开始打包" and self.process is not None and self.process.poll() is None:
+                    if self.pack_btn[
+                        "text"] == "▶开始打包" and self.process is not None and self.process.poll() is None:
                         self.process.terminate()
                         break
 
@@ -4121,14 +5318,15 @@ if ExePathManager.is_frozen():
             progress_thread.start()
             self.process.wait()
 
-            # 停止虚假进度
             self._stop_fake_progress()
             progress_thread.join(timeout=1)
 
             for d in ["build_temp", "__pycache__"]:
                 if os.path.exists(d):
-                    try: shutil.rmtree(d)
-                    except: pass
+                    try:
+                        shutil.rmtree(d)
+                    except:
+                        pass
             spec = os.path.join(self.current_dir, f"{out_name}.spec")
             if os.path.exists(spec):
                 os.remove(spec)
@@ -4234,26 +5432,37 @@ if ExePathManager.is_frozen():
         if not py:
             self.safe_log("❌ 未找到Python")
             return False
-        # 安全检测
-        installed, version = self._check_nuitka(py)
-        if not installed:
-            self.safe_log("⚠️ Nuitka 未安装，正在安装...")
-            self._install_nuitka(py)
-            # 安装后再次检查
+
+        # Nuitka 版本检测
+        version = None
+        if hasattr(self, '_packer_versions'):
+            version = self._packer_versions.get('Nuitka')
+
+        if not version:
             installed, version = self._check_nuitka(py)
             if not installed:
-                self.safe_log("❌ Nuitka 安装失败")
-                return False
+                self.safe_log("⚠️ Nuitka 未安装，正在安装...")
+                self._install_nuitka(py)
+                installed, version = self._check_nuitka(py)
+                if not installed:
+                    self.safe_log("❌ Nuitka 安装失败")
+                    return False
+            if hasattr(self, '_packer_versions'):
+                self._packer_versions['Nuitka'] = version
+        else:
+            installed, _ = self._check_nuitka(py)
+            if not installed:
+                self.safe_log("⚠️ Nuitka 未安装，正在安装...")
+                self._install_nuitka(py)
+                installed, version = self._check_nuitka(py)
+                if not installed:
+                    self.safe_log("❌ Nuitka 安装失败")
+                    return False
+                self._packer_versions['Nuitka'] = version
 
         self.safe_log(f"✅ Nuitka 版本: {version}")
-       
-        # 如果版本是 4.1，给出提示
-        if version.startswith("4.1"):
-            self.safe_log(f"⚠️ 检测到 Nuitka {version}，参数有变化")
-            self.safe_log("💡 已自动启用 4.1 兼容模式")
-            self.safe_log("   - --standalone → --deployment")
-            self.safe_log("   - --windows-icon → --windows-icon-from-ico")
-            self.safe_log("   - --windows-disable-console → --windows-console-mode=disable")
+
+        if version.startswith("4.1") and not self.nuitka_compat_mode.get():
             self.nuitka_compat_mode.set(True)
 
         out_name = self.output_name.get()
@@ -4262,47 +5471,83 @@ if ExePathManager.is_frozen():
         self.safe_log(f"📁 输出目录: {out_dir}")
 
         cmd = [py, "-m", "nuitka"]
-        version = self._get_version()
-        cmd.extend([f"--product-name={out_name}", f"--product-version={version}",
-                    f"--file-version=1.0.0.0", f"--company-name=PyPackTool",
-                    f"--copyright=Copyright (c) {datetime.datetime.now().year} PyPackTool"])
+
+        # ========== 使用新的版本信息==========
+        self._apply_version_to_nuitka(cmd)
 
         jobs = self.nuitka_jobs.get()
         if jobs == "auto":
             jobs = str(self.cpu_count)
         self.safe_log(f"⚙️ 并行任务: {jobs}")
 
-        backend = self.nuitka_backend.get()
-
-        # 设置环境变量
+        # 编译器选择逻辑
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         env["LANG"] = "zh_CN.UTF-8"
         env["LC_ALL"] = "zh_CN.UTF-8"
 
-        # 优先使用内置 MinGW64
-        if self.mingw_path:
-            # 将 MinGW64 bin 目录添加到 PATH
-            env["PATH"] = self.mingw_path + os.pathsep + env.get("PATH", "")
+        backend = self.nuitka_backend.get()
+        use_mingw = None
+
+        if backend == "MinGW64":
+            if not self.has_mingw and not self.mingw_path:
+                self.safe_log("⚠️ 未检测到 MinGW64 编译器")
+                if messagebox.askyesno("安装 MinGW64",
+                                       "未检测到 MinGW64 编译器，是否打开下载页面？\n\n下载后解压到 tools/mingw64 目录即可"):
+                    import webbrowser
+                    webbrowser.open("https://github.com/niXman/mingw-builds-binaries/releases")
+                    self.safe_log("💡 请下载 MinGW64 并解压到 tools/mingw64 目录")
+                else:
+                    self.safe_log("❌ 用户取消，请安装 MinGW64 或切换其他编译器")
+                return False
+            else:
+                use_mingw = True
+            self.safe_log("🔧 用户手动选择: MinGW64")
+
+        elif backend == "MSVC":
+            if not self.has_msvc:
+                self.safe_log("⚠️ 未检测到 MSVC 编译器")
+                if messagebox.askyesno("安装 MSVC",
+                                       "未检测到 MSVC 编译器，是否打开下载页面？\n\n请安装 Visual Studio Build Tools 或 Visual Studio"):
+                    import webbrowser
+                    webbrowser.open("https://visualstudio.microsoft.com/zh-hans/downloads/")
+                    self.safe_log("💡 请安装 Visual Studio Build Tools 后重试")
+                else:
+                    self.safe_log("❌ 用户取消，请安装 MSVC 或切换其他编译器")
+                return False
+            else:
+                use_mingw = False
+            self.safe_log("🔧 用户手动选择: MSVC")
+
+        else:  # auto 模式
+            has_mingw = self.has_mingw or self.mingw_path
+            has_msvc = self.has_msvc
+
+            if has_mingw and has_msvc:
+                use_mingw = True
+                self.safe_log("🔧 自动检测: MinGW64 和 MSVC 均可用，优先使用 MinGW64")
+            elif has_mingw:
+                use_mingw = True
+                self.safe_log("🔧 自动检测: 使用 MinGW64")
+            elif has_msvc:
+                use_mingw = False
+                self.safe_log("🔧 自动检测: 使用 MSVC")
+            else:
+                use_mingw = True
+                self.safe_log("🔧 未检测到编译器，将自动下载 MinGW64")
+
+        if use_mingw:
+            if self.mingw_path:
+                env["PATH"] = self.mingw_path + os.pathsep + env.get("PATH", "")
             cmd.append("--mingw64")
-            self.safe_log(f"🔧 使用内置 MinGW64: {self.mingw_path}")
-        elif self.has_msvc:
+            self.safe_log(f"🔧 使用: MinGW64")
+        else:
             cmd.append("--msvc=latest")
-            self.safe_log("🔧 使用 MSVC 编译器")
-        else:
-            cmd.append("--mingw64")
-            self.safe_log("🔧 使用自动下载的 MinGW64")
-        '''
-        detected = self._detect_gui(input_file)
-        if detected:
-            self.safe_log(f"🎨 检测到 GUI: {detected}")
-            cmd.append(f"--enable-plugin={detected}")
-        else:
-            cmd.apend("--enable-plugin=tk-inter")
-         '''
+            self.safe_log(f"🔧 使用: MSVC")
+
+        # GUI 插件
         gui_plugin = self.nuitka_gui_plugin.get()
         if gui_plugin == "auto":
-            # 自动检测
             detected = self._detect_gui(input_file)
             if detected:
                 cmd.append(f"--enable-plugin={detected}")
@@ -4322,7 +5567,7 @@ if ExePathManager.is_frozen():
             cmd.append("--onefile")
         else:
             if self.nuitka_compat_mode.get():
-                cmd.append("--deployment")      # 4.1 新版
+                cmd.append("--deployment")
             else:
                 cmd.append("--standalone")
 
@@ -4331,45 +5576,27 @@ if ExePathManager.is_frozen():
 
         if not self.debug_mode.get() and sys.platform == "win32":
             if self.nuitka_compat_mode.get():
-                cmd.append("--windows-console-mode=disable")  # 4.1 新版
+                cmd.append("--windows-console-mode=disable")
             else:
-                cmd.append("--windows-disable-console")        # 4.0.8 旧版
+                cmd.append("--windows-disable-console")
 
         if self.icon_path.get() and os.path.exists(self.icon_path.get()):
-            if self.nuitka_compat_mode.get():
-                cmd.append(f"--windows-icon={self.icon_path.get()}")  # 4.1 新版
-            else:
-                cmd.append(f"--windows-icon-from-ico={self.icon_path.get()}")  # 4.0.8 旧版
+            cmd.append(f"--windows-icon-from-ico={self.icon_path.get()}")
 
         if self.upx_switch.get() and self.upx_path.get():
             upx_exe = self.upx_path.get()
             cmd.append("--enable-plugin=upx")
             cmd.append(f"--upx-binary={upx_exe}")
-            self.safe_log(f"🗜️ 启用UPX压缩{upx_exe}")
+            self.safe_log(f"🗜️ 启用UPX压缩 {upx_exe}")
 
         for exc in self.exclude_list:
             cmd.append(f"--nofollow-import-to={exc}")
-       
-        # ========== 强制包含所有隐藏导入模块 ==========
+
         for imp in self.hidden_imports_list:
             cmd.append(f"--include-module={imp}")
-            #self.safe_log(f"📦 强制包含模块: {imp}")
-        '''
-        # 如果虚拟环境开启，添加虚拟环境路径
-        if self.use_venv:
-            venv_py = self._get_venv_python()
-            if venv_py:
-                site_packages = self._get_site_packages_path(venv_py)
-                if site_packages and os.path.exists(site_packages):
-                    cmd.append(f"--include-path={site_packages}")
-                    self.safe_log(f"📦 已添加虚拟环境路径: {site_packages}")
-        '''
+ 
         for src, tgt in self.data_files_list:
             cmd.append(f"--include-data-files={src}={tgt}")
-
-        # 添加 4.1 兼容缓存参数
-        #cmd.append("--disable-cache=all")
-        #cmd.append("--force-dll-dependency-cache-update")
 
         cmd.append(input_file)
         self.safe_log("🚀 开始 Nuitka 编译（较慢，请耐心等待）...")
@@ -4387,37 +5614,30 @@ if ExePathManager.is_frozen():
                                             universal_newlines=True, bufsize=1,
                                             encoding='utf-8', errors="replace",
                                             startupinfo=get_startupinfo(), env=env)
-            # 初始化进度
+
             self.progress_var.set(5)
             self.progress_label.config(text="5% - 启动Nuitka...")
             self.root.update_idletasks()
 
-            # 读取输出
             for line in iter(self.process.stdout.readline, ""):
                 if line:
                     line = line.rstrip()
                     self.safe_log(line)
                     ll = line.lower()
 
-                    # 1. 分析阶段
                     if "starting python compilation" in ll:
                         self.progress_var.set(10)
                         self.progress_label.config(text="10% - 分析模块...")
                         self.root.update_idletasks()
-
-                    # 2. 生成C代码
                     elif "generating source code" in ll:
                         self.progress_var.set(25)
                         self.progress_label.config(text="25% - 生成C代码...")
                         self.root.update_idletasks()
-
-                    # 3. 编译C代码
                     elif "running c compilation" in ll or "c compilation" in ll:
                         self.progress_var.set(40)
                         self.progress_label.config(text="40% - 编译C代码...")
                         self.root.update_idletasks()
 
-                        # 编译进度实时更新
                         m = re.search(r"Compiled\s+(\d+)/(\d+)\s+C\s+files", line, re.I)
                         if m:
                             c, t = int(m.group(1)), int(m.group(2))
@@ -4430,35 +5650,27 @@ if ExePathManager.is_frozen():
                         self.progress_var.set(60)
                         self.progress_label.config(text="60% - 编译中...")
                         self.root.update_idletasks()
-
                     elif "Creating single file" in ll:
                         self.progress_var.set(70)
                         self.progress_label.config(text="70% - 构建中...")
                         self.root.update_idletasks()
-                    # 4. 链接中
                     elif "linking" in ll and "Backend" not in ll:
                         self.progress_var.set(80)
                         self.progress_label.config(text="80% - 链接中...")
                         self.root.update_idletasks()
-
-                    # 5. 打包中
                     elif "Using compression" in ll:
                         self.progress_var.set(90)
                         self.progress_label.config(text="90% - 打包中...")
                         self.root.update_idletasks()
-                    # 清理缓存
                     elif "Removing" in ll:
                         self.progress_var.set(95)
                         self.progress_label.config(text="95% - 清理中...")
                         self.root.update_idletasks()
-
-                    # 6. 完成
                     elif "successfully created" in ll:
                         self.progress_var.set(100)
                         self.progress_label.config(text="100% - 完成!")
                         self.root.update_idletasks()
 
-            # 等待进程结束
             self.process.wait()
             success = self.process.returncode == 0
 
@@ -4492,11 +5704,294 @@ if ExePathManager.is_frozen():
             return False
 
     def _package_py2exe(self, input_file):
-        self.safe_log("⚠️ py2exe 对现代Python支持有限")
-        return self._generic_setup_build(input_file, "py2exe", "Py2exe")
+        """使用 py2exe 打包"""
+        python_cmd = self._get_python()
+		
+        if not python_cmd:
+            self.safe_log("❌ 未找到 Python")
+            return False
+
+        self.safe_log("⚠️ py2exe 对现代 Python 项目支持有限")
+
+        input_file = self.input_path.get()
+        output_name = self.output_name.get()
+        base_output_dir = self.output_path.get()
+        project_output_dir = os.path.join(
+            base_output_dir, output_name.replace(" ", "_")
+        )
+        os.makedirs(project_output_dir, exist_ok=True)
+        self.safe_log(f"📁 输出目录: {project_output_dir}")
+
+        # 生成 setup.py（三引号顶格）
+        setup_content = f"""# -*- coding: utf-8 -*-
+from distutils.core import setup
+import py2exe
+
+setup(
+    console=[{{"script": "{os.path.basename(input_file)}"}}],
+    options={{'py2exe': {{
+        'compressed': True,
+        'optimize': 2,
+        'bundle_files': 3,  # 改为 3（Python 3.12+ 必须）
+        'includes': {self.hidden_imports_list},
+        'excludes': {self.exclude_list}
+    }}}},
+    zipfile=None
+)
+"""
+
+        setup_path = os.path.join(project_output_dir, "setup.py")
+        with open(setup_path, "w", encoding="utf-8") as f:
+            f.write(setup_content)
+
+        # 复制源文件到输出目录
+        shutil.copy2(input_file, project_output_dir)
+
+        # 打包命令
+        cmd = [python_cmd, "setup.py", "py2exe"]
+        self.safe_log(f"🚀 开始 py2exe 打包...")
+        self.safe_log(f"📝 命令: {' '.join(cmd)}")
+        self.root.update()
+
+        # 进度条初始化
+        self.progress_var.set(5)
+        self.progress_label.config(text="5% - 准备中...")
+        self.root.update_idletasks()
+
+        try:
+            startupinfo = get_startupinfo()
+            system_encoding = locale.getpreferredencoding()
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+                encoding=system_encoding,
+                errors="replace",
+                startupinfo=startupinfo,
+                cwd=project_output_dir,
+            )
+
+            line_count = 0
+            for line in iter(self.process.stdout.readline, ""):
+                if line.strip():
+                    self.safe_log(line.strip())
+                    line_count += 1
+
+                    # 根据输出行数更新进度
+                    if "Copying" in line or "copying" in line.lower():
+                        pct = min(20 + line_count // 2, 50)
+                        self.progress_var.set(pct)
+                        self.progress_label.config(text=f"{pct}% - 复制依赖...")
+                        self.root.update_idletasks()
+                    elif "Building" in line or "building" in line.lower():
+                        pct = min(50 + line_count // 3, 80)
+                        self.progress_var.set(pct)
+                        self.progress_label.config(text=f"{pct}% - 构建中...")
+                        self.root.update_idletasks()
+                    elif "copy" in line.lower() and "dll" in line.lower():
+                        pct = min(80 + line_count // 5, 95)
+                        self.progress_var.set(pct)
+                        self.progress_label.config(text=f"{pct}% - 复制DLL...")
+                        self.root.update_idletasks()
+
+                if (
+                    self.pack_btn["text"] == "▶开始打包"
+                    and self.process.poll() is None
+                ):
+                    self.process.terminate()
+                    break
+
+            self.process.wait()
+            success = self.process.returncode == 0
+
+            if success:
+                self.progress_var.set(100)
+                self.progress_label.config(text="100% - 完成!")
+                self.root.update_idletasks()
+
+                dist_dir = os.path.join(project_output_dir, "dist")
+                if os.path.exists(dist_dir):
+                    for item in os.listdir(dist_dir):
+                        src = os.path.join(dist_dir, item)
+                        dst = os.path.join(project_output_dir, item)
+                        if os.path.isdir(src):
+                            shutil.copytree(src, dst, dirs_exist_ok=True)
+                        else:
+                            shutil.copy2(src, dst)
+                self.safe_log(f"✅ py2exe 打包完成！输出位置: {project_output_dir}")
+                self._save_config()
+            else:
+                self.safe_log("❌ py2exe 打包失败")
+            return success
+        except Exception as e:
+            self.safe_log(f"❌ 打包出错: {e}")
+            return False
+        finally:
+            self.process = None
 
     def _package_cxfreeze(self, input_file):
-        return self._generic_setup_build(input_file, "cx_Freeze", "Cx_Freeze")
+        """使用 cx_Freeze 打包"""
+        python_cmd = self._get_python()
+        if not python_cmd:
+            self.safe_log("❌ 未找到 Python")
+            return False
+
+        input_file = self.input_path.get()
+        output_name = self.output_name.get()
+        base_output_dir = self.output_path.get()
+        project_output_dir = os.path.join(
+            base_output_dir, output_name.replace(" ", "_")
+        )
+        os.makedirs(project_output_dir, exist_ok=True)
+        self.safe_log(f"📁 输出目录: {project_output_dir}")
+
+        nocon = (
+            not self.debug_switch.get()
+            if hasattr(self, "debug_switch")
+            else not self.debug_mode.get()
+        )
+        icon_file = self.icon_path.get()
+
+        # 处理图标路径
+        icon_param = ""
+        if icon_file and os.path.exists(icon_file):
+            icon_filename = os.path.basename(icon_file)
+            shutil.copy2(icon_file, project_output_dir)
+            icon_param = f', icon="{icon_filename}"'
+        else:
+            icon_param = ""
+
+        # 生成 setup.py
+        setup_content = f"""# -*- coding: utf-8 -*-
+from cx_Freeze import setup, Executable
+import sys, os
+
+# 1、基础配置
+build_exe_options = {{
+    "packages": ["os", "sys"],# 包含的额外包
+    "excludes": {self.exclude_list},# 排除的包
+    "include_files": [], # 包含的额外文件或文件夹
+    "optimize": 2, # 优化级别0,1,2
+    }}
+# 根据程序类型设置 base
+base = None
+#if sys.platform == "win32" and {nocon}:
+    #base = "Win32GUI"
+# 3、调用 setup 函数    
+setup(
+    name="{output_name}",
+    version="1.0",
+    description="打包程序",
+    options={{"build_exe": build_exe_options}},
+    executables=[Executable(
+        "{os.path.basename(input_file)}",
+        base=base,
+        target_name="{output_name}.exe"{icon_param}
+    )]
+)
+"""
+        setup_path = os.path.join(project_output_dir, "setup.py")
+        with open(setup_path, "w", encoding="utf-8") as f:
+            f.write(setup_content)
+
+        # 复制源文件和图标
+        shutil.copy2(input_file, project_output_dir)
+        if icon_file and os.path.exists(icon_file):
+            shutil.copy2(icon_file, project_output_dir)
+
+        # 构建命令
+        cmd = [python_cmd, "setup.py", "build_exe"]
+        self.safe_log("🚀 开始 cx_Freeze 打包...")
+        self.root.update()
+
+        # 进度条初始化
+        self.progress_var.set(0)
+        self.progress_label.config(text="0% - 准备中...")
+        self.root.update_idletasks()
+
+        # 进度计数
+        step = 0
+
+        try:
+            startupinfo = get_startupinfo()
+            system_encoding = locale.getpreferredencoding()
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+                encoding=system_encoding,
+                errors="replace",
+                startupinfo=startupinfo,
+                cwd=project_output_dir,
+            )
+
+            for line in iter(self.process.stdout.readline, ""):
+                if line.strip():
+                    self.safe_log(line.strip())
+                    line_lower = line.lower()
+
+                    # 根据输出更新进度
+                    if "copying" in line_lower:
+                        step += 1
+                        pct = min(step * 5, 80)
+                        self.progress_var.set(pct)
+                        self.progress_label.config(text=f"{pct}% - 复制文件...")
+                        self.root.update_idletasks()
+                    elif "building" in line_lower or "compiling" in line_lower:
+                        self.progress_var.set(85)
+                        self.progress_label.config(text="85% - 构建中...")
+                        self.root.update_idletasks()
+                    elif "writing" in line_lower:
+                        self.progress_var.set(95)
+                        self.progress_label.config(text="95% - 写入文件...")
+                        self.root.update_idletasks()
+
+                if (
+                    self.pack_btn["text"] == "▶开始打包"
+                    and self.process.poll() is None
+                ):
+                    self.process.terminate()
+                    break
+            self.process.wait()
+            success = self.process.returncode == 0
+
+            if success:
+                self.progress_var.set(100)
+                self.progress_label.config(text="100% - 完成!")
+                self.root.update_idletasks()
+
+                # 复制生成的文件
+                build_dir = os.path.join(project_output_dir, "build")
+                if os.path.exists(build_dir):
+                    import glob
+
+                    exe_dirs = glob.glob(os.path.join(build_dir, "exe.*"))
+                    if exe_dirs:
+                        exe_dir = exe_dirs[0]
+                        for item in os.listdir(exe_dir):
+                            src = os.path.join(exe_dir, item)
+                            dst = os.path.join(project_output_dir, item)
+                            if os.path.isdir(src):
+                                if os.path.exists(dst):
+                                    shutil.rmtree(dst)
+                                shutil.copytree(src, dst)
+                            else:
+                                shutil.copy2(src, dst)
+                self.safe_log(f"✅ cx_Freeze 打包完成！输出位置: {project_output_dir}")
+                self._save_config()
+            else:
+                self.safe_log("❌ cx_Freeze 打包失败")
+            return success
+        except Exception as e:
+            self.safe_log(f"❌ 打包出错: {e}")
+            return False
+        finally:
+            self.process = None
+
 
     def _generic_setup_build(self, input_file, module, name):
         py = self._get_python()
@@ -4556,19 +6051,923 @@ setup(
         finally:
             self.process = None
 
+    def _find_rustc(self):
+        """查找 rustc 可执行文件路径，返回路径或 None"""
+        import os
+        import shutil
+
+        # 1. 先尝试 PATH 中直接查找
+        rustc_path = shutil.which("rustc")
+        if rustc_path:
+            return rustc_path
+
+        # 2. 检查常见安装路径
+        common_paths = []
+
+        if sys.platform == "win32":
+            # Windows 常见路径
+            user_profile = os.environ.get("USERPROFILE", "")
+            program_files = os.environ.get("ProgramFiles", "C:\\Program Files")
+            local_appdata = os.environ.get("LOCALAPPDATA", "")
+
+            common_paths = [
+                os.path.join(user_profile, ".cargo", "bin", "rustc.exe"),
+                os.path.join(local_appdata, ".cargo", "bin", "rustc.exe"),
+                os.path.join(program_files, "Rust", "bin", "rustc.exe"),
+                r"C:\Users\{}\.cargo\bin\rustc.exe".format(os.environ.get("USERNAME", "")),
+                r"C:\Rust\bin\rustc.exe",
+            ]
+
+            # 检查 RUSTUP_HOME 环境变量
+            rustup_home = os.environ.get("RUSTUP_HOME")
+            if rustup_home:
+                common_paths.insert(0, os.path.join(rustup_home, "bin", "rustc.exe"))
+
+            cargo_home = os.environ.get("CARGO_HOME")
+            if cargo_home:
+                common_paths.insert(0, os.path.join(cargo_home, "bin", "rustc.exe"))
+        else:
+            # Linux/macOS 常见路径
+            home = os.path.expanduser("~")
+            common_paths = [
+                os.path.join(home, ".cargo", "bin", "rustc"),
+                os.path.join(home, ".rustup", "bin", "rustc"),
+                "/usr/local/cargo/bin/rustc",
+                "/usr/local/rust/bin/rustc",
+                "/opt/rust/bin/rustc",
+            ]
+
+            rustup_home = os.environ.get("RUSTUP_HOME")
+            if rustup_home:
+                common_paths.insert(0, os.path.join(rustup_home, "bin", "rustc"))
+
+            cargo_home = os.environ.get("CARGO_HOME")
+            if cargo_home:
+                common_paths.insert(0, os.path.join(cargo_home, "bin", "rustc"))
+
+        for path in common_paths:
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                return path
+
+        return None
+
+    def _clear_cargo_lock(self):
+        """清理 Cargo 包缓存锁"""
+        import glob
+
+        # 1. 清理 Cargo 全局锁
+        cargo_home = os.path.join(os.path.expanduser("~"), ".cargo")
+        locks = [
+            os.path.join(cargo_home, ".package-cache"),
+            os.path.join(cargo_home, "registry", ".package-cache"),
+        ]
+        for lock in locks:
+            if os.path.exists(lock):
+                try:
+                    os.remove(lock)
+                    self.safe_log(f"🗑️ 清理 Cargo 锁: {lock}")
+                except Exception as e:
+                    self.safe_log(f"⚠️ 无法清理锁: {e}")
+
+        # 2. 清理 PyOxidizer 临时目录锁
+        temp_base = os.environ.get("TEMP", os.environ.get("TMP", "C:\\Windows\\Temp"))
+        for tmp_dir in glob.glob(os.path.join(temp_base, "pyoxidizer*")):
+            cargo_lock = os.path.join(tmp_dir, ".cargo-lock")
+            if os.path.exists(cargo_lock):
+                try:
+                    os.remove(cargo_lock)
+                    self.safe_log(f"🗑️ 清理临时锁: {cargo_lock}")
+                except:
+                    pass
+
+    def _kill_residual_processes(self):
+        """终止残留的构建进程"""
+        try:
+            import psutil
+            import time
+
+            killed = 0
+            for proc in psutil.process_iter(['pid', 'name', 'create_time']):
+                try:
+                    name = proc.info['name']
+                    if name in ['cargo.exe', 'rustc.exe']:
+                        age = time.time() - proc.info['create_time']
+                        if age > 600:  # 超过10分钟
+                            self.safe_log(f"🗑️ 终止卡死进程: {name} (PID:{proc.info['pid']}, 运行{age:.0f}秒)")
+                            proc.kill()
+                            killed += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            if killed > 0:
+                self.safe_log(f"✅ 已清理 {killed} 个残留进程")
+                time.sleep(2)
+        except ImportError:
+            pass  # psutil 没装就跳过
+
+    def _setup_project_cargo_mirror(self, project_output_dir):
+        """配置 Cargo 镜像（传统 git 格式，兼容旧版 Rust）"""
+        cargo_dir = os.path.join(project_output_dir, ".cargo")
+        os.makedirs(cargo_dir, exist_ok=True)
+
+        config_path = os.path.join(cargo_dir, "config.toml")
+
+        # 用传统 git registry，不用 sparse（兼容 Rust 1.66）
+        config_content = """[source.crates-io]
+replace-with = 'ustc'
+
+[source.ustc]
+registry = "git://mirrors.ustc.edu.cn/crates.io-index"
+
+[net]
+git-fetch-with-cli = true
+"""
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write(config_content)
+
+        self.safe_log("✅ 已配置 Cargo 镜像 (ustc.edu.cn, git协议)")
+
+    def _remove_pyoxidizer_old_rust(self):
+        """删除 PyOxidizer 自带的旧版 Rust，强制使用系统 Rust"""
+        pyoxidizer_rust_dir = os.path.join(
+            os.path.expanduser("~"),
+            "AppData", "Local", "pyoxidizer", "rust"
+        )
+        if os.path.exists(pyoxidizer_rust_dir):
+            self.safe_log(f"🗑️ 清理 PyOxidizer 旧 Rust: {pyoxidizer_rust_dir}")
+            import shutil
+            shutil.rmtree(pyoxidizer_rust_dir, ignore_errors=True)
+
     def _package_pyoxidizer(self, input_file):
-        self.safe_log("⚠️ PyOxidizer 需要 Rust 环境")
-        return False
+        """使用 PyOxidizer 打包（使用本地预下载的 Python 发行版）"""
+        python_cmd = self._get_python()
+        if not python_cmd:
+            self.safe_log("❌ 未找到 Python")
+            return False
+
+        # ========== 清理残留 ==========
+        #self._clear_cargo_lock()
+        self._kill_residual_processes()
+        #self._remove_pyoxidizer_old_rust()
+
+        # ========== 进度条初始化 ==========
+        self.progress_var.set(0)
+        self.progress_label.config(text="0% - 准备中...")
+        self.root.update_idletasks()
+
+        # ========== 检测 Rust ==========
+        rustc_path = self._find_rustc()
+        if not rustc_path:
+            self.safe_log("⚠️ 未检测到 Rust 安装")
+            messagebox.showinfo(
+                "提示",
+                "请先安装 Rust:\n\n"
+                "Windows: 访问 https://rustup.rs/ 下载 rustup-init.exe\n"
+                "Linux/macOS: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh\n\n"
+                "安装后请重启程序以确保环境变量生效。"
+            )
+            return False
+
+        self.safe_log(f"✅ 检测到 Rust: {rustc_path}")
+        try:
+            rust_result = subprocess.run(
+                [rustc_path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                startupinfo=get_startupinfo(),
+            )
+            if rust_result.returncode == 0:
+                self.safe_log(f"📦 {rust_result.stdout.strip()}")
+        except Exception as e:
+            self.safe_log(f"⚠️ 验证 Rust 版本时出错: {e}")
+
+        self.progress_var.set(10)
+        self.progress_label.config(text="10% - 准备配置文件...")
+        self.root.update_idletasks()
+
+        input_file = self.input_path.get()
+        output_name = self.output_name.get()
+        base_output_dir = self.output_path.get()
+        project_output_dir = os.path.join(
+            base_output_dir, output_name.replace(" ", "_")
+        )
+        os.makedirs(project_output_dir, exist_ok=True)
+        self.safe_log(f"📁 输出目录: {project_output_dir}")
+
+        entry_module = os.path.basename(input_file).replace('.py', '')
+
+        # 检查是否有 requirements.txt
+        req_file = os.path.join(os.path.dirname(input_file), "requirements.txt")
+        has_requirements = os.path.exists(req_file)
+
+        # 构建 pip 安装语句
+        pip_install_lines = []
+        if has_requirements:
+            pip_install_lines.append(f'    exe.add_python_resources(exe.pip_install(["-r", r"{req_file}"]))')
+        pip_install_lines.append('    exe.add_python_resources(exe.pip_install(["Pillow", "requests"]))')
+        pip_install_block = "\n".join(pip_install_lines)
+
+        # ========== 本地缓存目录 ==========
+        cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "pyoxidizer_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+
+        self.safe_log(f"📦 缓存目录: {cache_dir}")
+
+        # 发行版文件名
+        dist_filename = "cpython-3.10.9+20221220-x86_64-pc-windows-msvc-shared-pgo-full.tar.zst"
+        local_dist_path = os.path.join(cache_dir, dist_filename)
+
+        # 如果没有本地缓存，尝试下载
+        if not os.path.exists(local_dist_path):
+            self.safe_log("⚠️ 未找到本地 Python 发行版缓存，尝试下载...")
+            self.progress_var.set(12)
+            self.progress_label.config(text="12% - 下载 Python 发行版...")
+            self.root.update_idletasks()
+
+            download_url = (
+                "https://github.com/indygreg/python-build-standalone/"
+                "releases/download/20221220/cpython-3.10.9%2B20221220-x86_64-pc-windows-msvc-shared-pgo-full.tar.zst"
+            )
+
+            mirror_urls = [
+                f"https://ghproxy.com/{download_url}",
+                f"https://mirror.ghproxy.com/{download_url}",
+                download_url,
+            ]
+
+            downloaded = False
+            for url in mirror_urls:
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=120) as response:
+                        with open(local_dist_path, 'wb') as f:
+                            f.write(response.read())
+                    downloaded = True
+                    self.safe_log(f"✅ 下载成功")
+                    break
+                except Exception as e:
+                    self.safe_log(f"⚠️ 下载失败: {e}")
+                    continue
+
+            if not downloaded:
+                self.safe_log("❌ 无法下载 Python 发行版")
+                messagebox.showerror(
+                    "错误",
+                    f"无法自动下载 Python 发行版。\n\n"
+                    f"请手动下载：\n{dist_filename}\n\n"
+                    f"放到目录：\n{cache_dir}\n\n"
+                    f"下载地址：\n{download_url}"
+                )
+                return False
+
+        # SHA256 校验值
+        dist_sha256 = "9902a5cb5c3b8eb13fb49e8804d16929161c38aa6d64f004d2317ca7c37a06cb"
+
+        # ========== 生成 bzl 配置 ==========
+        bzl_content = (
+            '# PyOxidizer 配置文件\n'
+            '\n'
+            'def make_exe():\n'
+            f'    dist = PythonDistribution(\n'
+            f'        sha256="{dist_sha256}",\n'
+            f'        local_path=r"{local_dist_path}",\n'
+            f'        flavor="standalone",\n'
+            f'    )\n'
+            '\n'
+            '    policy = dist.make_python_packaging_policy()\n'
+            '    policy.resources_location = "in-memory"\n'
+            '    policy.resources_location_fallback = "filesystem-relative:prefix"\n'
+            '    policy.extension_module_filter = "all"\n'
+            '    policy.include_distribution_sources = True\n'
+            '    policy.include_distribution_resources = True\n'
+            '    policy.include_test = False\n'
+            '\n'
+            '    python_config = dist.make_python_interpreter_config()\n'
+            f'    python_config.run_module = "{entry_module}"\n'
+            '\n'
+            f'    exe = dist.to_python_executable(\n'
+            f'        name="{output_name}",\n'
+            '        packaging_policy=policy,\n'
+            '        config=python_config,\n'
+            '    )\n'
+            '\n'
+            f'    exe.add_python_resources(exe.read_package_root(\n'
+            f'        path=r"{project_output_dir}",\n'
+            f'        packages=["{entry_module}"],\n'
+            '    ))\n'
+            '\n'
+            f'{pip_install_block}\n'
+            '\n'
+            '    return exe\n'
+            '\n'
+            'def make_embedded_resources(exe):\n'
+            '    return exe.to_embedded_resources()\n'
+            '\n'
+            'def make_install(exe):\n'
+            '    files = FileManifest()\n'
+            '    files.add_python_resource(".", exe)\n'
+            '    return files\n'
+            '\n'
+            'def register_code_signers():\n'
+            '    return\n'
+            '\n'
+            'register_code_signers()\n'
+            'register_target("exe", make_exe)\n'
+            'register_target("resources", make_embedded_resources, depends=["exe"], default_build_script=True)\n'
+            'register_target("install", make_install, depends=["exe"], default=True)\n'
+            'resolve_targets()\n'
+        )
+
+        bzl_path = os.path.join(project_output_dir, "pyoxidizer.bzl")
+        with open(bzl_path, "w", encoding="utf-8") as f:
+            f.write(bzl_content)
+
+        self.progress_var.set(15)
+        self.progress_label.config(text="15% - 配置文件已生成")
+        self.root.update_idletasks()
+
+        # 复制源文件
+        module_dir = os.path.join(project_output_dir, entry_module)
+        os.makedirs(module_dir, exist_ok=True)
+
+        shutil.copy2(input_file, os.path.join(module_dir, "__init__.py"))
+        shutil.copy2(input_file, os.path.join(module_dir, "__main__.py"))
+
+        if self.icon_path.get():
+            shutil.copy2(self.icon_path.get(), project_output_dir)
+
+        self.progress_var.set(20)
+        self.progress_label.config(text="20% - 文件复制完成")
+        self.root.update_idletasks()
+
+        # ========== 配置 Cargo 镜像 ==========
+        self._setup_project_cargo_mirror(project_output_dir)
+
+        # ========== 构建命令 + 环境变量 ==========
+        cmd = ["pyoxidizer", "build", "--path", project_output_dir]
+
+        # 获取系统 Rust 目录，强制 PyOxidizer 使用系统 Rust
+        rust_bin_dir = os.path.dirname(rustc_path)  # rustc.exe 所在目录
+
+        env = os.environ.copy()
+
+        # 关键：把系统 Rust/Cargo 放到 PATH 最前面，覆盖 PyOxidizer 自带的
+        original_path = env.get("PATH", "")
+        env["PATH"] = rust_bin_dir + os.pathsep + original_path
+
+        # 设置 CARGO_HOME 为系统 cargo 目录（如果有）
+        system_cargo_home = os.path.join(os.path.expanduser("~"), ".cargo")
+        if os.path.exists(system_cargo_home):
+            env["CARGO_HOME"] = system_cargo_home
+
+        env["CARGO_REGISTRIES_CRATES_IO_PROTOCOL"] = "git"
+
+        self.safe_log(f"🔧 使用系统 Rust PATH: {rust_bin_dir}")
+        self.safe_log(f"🔧 CARGO_HOME: {env.get('CARGO_HOME', '默认')}")
+
+        self.safe_log("🚀 开始 PyOxidizer 打包...")
+        self.progress_var.set(25)
+        self.progress_label.config(text="25% - 开始编译...")
+        self.root.update_idletasks()
+
+        try:
+            startupinfo = get_startupinfo()
+            system_encoding = locale.getpreferredencoding()
+
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+                encoding=system_encoding,
+                errors="replace",
+                startupinfo=startupinfo,
+                cwd=project_output_dir,
+                env=env,
+            )
+
+            line_count = 0
+            for line in iter(self.process.stdout.readline, ""):
+                if line.strip():
+                    self.safe_log(line.strip())
+                    line_count += 1
+                    line_lower = line.lower()
+
+                    if "compiling" in line_lower:
+                        pct = min(25 + line_count // 10, 70)
+                        self.progress_var.set(pct)
+                        self.progress_label.config(text=f"{pct}% - 编译中...")
+                        self.root.update_idletasks()
+                    elif "linking" in line_lower:
+                        self.progress_var.set(80)
+                        self.progress_label.config(text="80% - 链接中...")
+                        self.root.update_idletasks()
+                    elif "installing" in line_lower or "finished" in line_lower:
+                        self.progress_var.set(90)
+                        self.progress_label.config(text="90% - 安装中...")
+                        self.root.update_idletasks()
+
+                if (
+                        self.pack_btn["text"] == "▶开始打包"
+                        and self.process.poll() is None
+                ):
+                    self.process.terminate()
+                    break
+
+            self.process.wait()
+
+            self.progress_var.set(95)
+            self.progress_label.config(text="95% - 整理输出文件...")
+            self.root.update_idletasks()
+
+            # 查找 exe
+            build_base = os.path.join(project_output_dir, "build")
+            exe_file = None
+
+            possible_paths = [
+                os.path.join(build_base, "x86_64-pc-windows-msvc", "release", "exe", f"{output_name}.exe"),
+                os.path.join(build_base, "x86_64-pc-windows-msvc", "release", "install", f"{output_name}.exe"),
+                os.path.join(build_base, "x86_64-pc-windows-msvc", "debug", "exe", f"{output_name}.exe"),
+                os.path.join(build_base, "x86_64-pc-windows-msvc", "debug", "install", f"{output_name}.exe"),
+            ]
+
+            for path in possible_paths:
+                if os.path.exists(path):
+                    exe_file = path
+                    break
+
+            if exe_file:
+                final_exe = os.path.join(project_output_dir, f"{output_name}.exe")
+                shutil.copy2(exe_file, final_exe)
+                self.safe_log(f"✅ 已复制可执行文件到: {final_exe}")
+
+            success = self.process.returncode == 0
+            if success:
+                self.progress_var.set(100)
+                self.progress_label.config(text="100% - 打包完成!")
+                self.safe_log(f"✅ PyOxidizer 打包成功！输出位置: {project_output_dir}")
+                self._save_config()
+            else:
+                self.safe_log("❌ PyOxidizer 打包失败")
+            return success
+        except Exception as e:
+            self.safe_log(f"❌ 打包出错: {e}")
+            return False
+        finally:
+            self.process = None
 
     def _package_pynsist(self, input_file):
-        self.safe_log("⚠️ Pynsist 生成安装程序,需安装NSIS")
-        return False
+        """使用 Pynsist 打包（生成安装程序）"""
+        python_cmd = self._get_python()
+        if not python_cmd:
+            self.safe_log("❌ 未找到 Python")
+            return False
+
+        # ========== 进度条初始化 ==========
+        self.progress_var.set(0)
+        self.progress_label.config(text="0% - 准备中...")
+        self.root.update_idletasks()
+        # =================================
+
+        input_file = self.input_path.get()
+        output_name = self.output_name.get()
+        base_output_dir = self.output_path.get()
+        project_output_dir = os.path.join(
+            base_output_dir, output_name.replace(" ", "_")
+        )
+        os.makedirs(project_output_dir, exist_ok=True)
+        self.safe_log(f"📁 输出目录: {project_output_dir}")
+
+        self.progress_var.set(5)
+        self.progress_label.config(text="5% - 准备环境...")
+        self.root.update_idletasks()
+
+        # ========== 设置本地嵌入式 Python 包 ==========
+        tools_dir = os.path.join(self.current_dir, "tools")
+        embed_python_zip = os.path.join(tools_dir, "python-3.12.0-embed-amd64.zip")
+
+        if os.path.exists(embed_python_zip):
+            cache_dir = os.path.join(tools_dir, "pynsist_cache")
+            os.makedirs(cache_dir, exist_ok=True)
+            os.environ["PYNSIST_CACHE"] = cache_dir
+
+            cached_zip = os.path.join(cache_dir, "python-3.12.0-embed-amd64.zip")
+            if not os.path.exists(cached_zip):
+                shutil.copy2(embed_python_zip, cached_zip)
+                self.safe_log(f"✅ 已复制嵌入式 Python 到缓存")
+            else:
+                self.safe_log(f"✅ 嵌入式 Python 已存在于缓存")
+        else:
+            self.safe_log(f"⚠️ 未找到本地嵌入式 Python，将从官网下载")
+        # ============================================
+
+        self.progress_var.set(10)
+        self.progress_label.config(text="10% - 准备配置文件...")
+        self.root.update_idletasks()
+
+        # 获取入口模块名
+        entry_module = os.path.basename(input_file).replace(".py", "")
+
+        # 获取 console 设置（默认 True）
+        console_setting = (
+            self.console_var.get() if hasattr(self, "console_var") else True
+        )
+        console_value = "true" if console_setting else "false"
+
+        # 生成 installer.cfg 配置文件
+        cfg_content = f"""[Application]
+name={output_name}
+version=1.0
+entry_point={entry_module}:main
+console={console_value}
+
+[Python]
+version=3.12.0
+bitness=64
+
+[Build]
+directory=build
+installer_name={output_name}_Setup.exe
+
+[Include]
+pypi_wheels =
+files=
+"""
+
+        # 如果有图标
+        if self.icon_path.get() and os.path.exists(self.icon_path.get()):
+            cfg_content = cfg_content.replace(
+                "[Include]",
+                f"""[Include]
+                icon={os.path.basename(self.icon_path.get())}
+                """,
+            )
+            shutil.copy2(self.icon_path.get(), project_output_dir)
+
+        # 写入配置文件
+        cfg_path = os.path.join(project_output_dir, "installer.cfg")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            f.write(cfg_content)
+
+        self.progress_var.set(15)
+        self.progress_label.config(text="15% - 配置文件已生成")
+        self.root.update_idletasks()
+
+        # 复制源文件
+        shutil.copy2(input_file, project_output_dir)
+
+        # 复制数据文件
+        for source, target in self.data_files_list:
+            if os.path.exists(source):
+                dest_path = os.path.join(project_output_dir, target)
+                dest_dir = os.path.dirname(dest_path)
+                if dest_dir and not os.path.exists(dest_dir):
+                    os.makedirs(dest_dir, exist_ok=True)
+                shutil.copy2(source, dest_path)
+                self.safe_log(f"  📄 复制数据文件: {source} -> {target}")
+
+        self.progress_var.set(20)
+        self.progress_label.config(text="20% - 文件复制完成")
+        self.root.update_idletasks()
+
+        # 获取 pynsist 命令路径
+        pynsist_exe = os.path.join(os.path.dirname(python_cmd), "pynsist.exe")
+        if os.path.exists(pynsist_exe):
+            cmd = [pynsist_exe, cfg_path, "--no-makensis"]
+        else:
+            cmd = [python_cmd, "-m", "pynsist", cfg_path, "--no-makensis"]
+
+        self.safe_log(f"🚀 开始生成 NSIS 脚本...")
+        self.progress_var.set(25)
+        self.progress_label.config(text="25% - 生成 NSIS 脚本...")
+        self.root.update_idletasks()
+
+        try:
+            startupinfo = get_startupinfo()
+            system_encoding = locale.getpreferredencoding()
+
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+                encoding=system_encoding,
+                errors="replace",
+                startupinfo=startupinfo,
+                cwd=project_output_dir,
+                env=os.environ,
+            )
+
+            line_count = 0
+            for line in iter(self.process.stdout.readline, ""):
+                if line.strip():
+                    self.safe_log(line.strip())
+                    line_count += 1
+                    # 根据输出行数估算进度（25% - 50%）
+                    if line_count % 10 == 0:
+                        pct = min(25 + line_count // 2, 50)
+                        self.progress_var.set(pct)
+                        self.progress_label.config(text=f"{pct}% - 生成 NSIS 脚本...")
+                        self.root.update_idletasks()
+
+            self.process.wait()
+
+            if self.process.returncode != 0:
+                self.safe_log("❌ 生成 NSIS 脚本失败")
+                return False
+
+            self.progress_var.set(50)
+            self.progress_label.config(text="50% - NSIS 脚本已生成")
+            self.root.update_idletasks()
+
+            # ========== 修改生成的 NSIS 脚本，添加桌面快捷方式 ==========
+            nsi_file = os.path.join(project_output_dir, "build", "installer.nsi")
+            if os.path.exists(nsi_file):
+                with open(nsi_file, "r", encoding="utf-8") as f:
+                    nsi_content = f.read()
+
+                # 根据 console 设置决定使用 .launch.py 还是 .launch.pyw
+                launch_ext = ".launch.py" if console_setting else ".launch.pyw"
+                launch_file = f"{output_name}{launch_ext}"
+
+                # 快捷方式指向 python.exe + launch 文件
+                python_exe = "$INSTDIR\\Python\\python.exe"
+
+                shortcut_code = f'\n    CreateShortcut "$DESKTOP\\{output_name}.lnk" "{python_exe}" "$INSTDIR\\{launch_file}"\n'
+
+                # 在开始菜单快捷方式后面插入桌面快捷方式
+                if "CreateShortcut" in nsi_content:
+                    lines = nsi_content.split("\n")
+                    new_lines = []
+                    inserted = False
+                    for i, line in enumerate(lines):
+                        new_lines.append(line)
+                        if (
+                            not inserted
+                            and "CreateShortcut" in line
+                            and "$SMPROGRAMS" in line
+                        ):
+                            new_lines.append(shortcut_code)
+                            inserted = True
+                    if inserted:
+                        nsi_content = "\n".join(new_lines)
+                        self.safe_log(f"✅ 已添加桌面快捷方式，指向: {launch_file}")
+                    else:
+                        nsi_content = nsi_content.replace(
+                            "SectionEnd", f"{shortcut_code}SectionEnd"
+                        )
+                        self.safe_log(f"✅ 已添加桌面快捷方式，指向: {launch_file}")
+                else:
+                    nsi_content = nsi_content.replace(
+                        "SectionEnd", f"{shortcut_code}SectionEnd"
+                    )
+                    self.safe_log(f"✅ 已添加桌面快捷方式，指向: {launch_file}")
+
+                # 写回修改后的 NSIS 脚本
+                with open(nsi_file, "w", encoding="utf-8") as f:
+                    f.write(nsi_content)
+
+                self.progress_var.set(60)
+                self.progress_label.config(text="60% - 已添加快捷方式")
+                self.root.update_idletasks()
+
+                # ========== 运行 makensis 编译安装程序 ==========
+                # 优先从 tools 目录查找
+                makensis_path = None
+                tools_dir = os.path.join(self.current_dir, "tools")
+                possible_paths = [
+                    os.path.join(tools_dir, "NSIS", "makensis.exe"),
+                    r"C:\Program Files (x86)\NSIS\makensis.exe",
+                    r"C:\Program Files\NSIS\makensis.exe",
+                ]
+
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        makensis_path = path
+                        break
+
+                if os.path.exists(makensis_path):
+                    self.safe_log(f"🚀 开始编译安装程序...")
+                    self.progress_var.set(70)
+                    self.progress_label.config(text="70% - 编译安装程序...")
+                    self.root.update_idletasks()
+
+                    result = subprocess.run(
+                        [makensis_path, nsi_file],
+                        cwd=project_output_dir,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+
+                    if result.returncode == 0:
+                        self.safe_log(f"✅ 安装程序编译成功")
+                        self.progress_var.set(90)
+                        self.progress_label.config(text="90% - 编译完成")
+                        self.root.update_idletasks()
+
+                        # 查找生成的安装程序
+                        setup_exe = os.path.join(
+                            project_output_dir, "build", f"{output_name}_Setup.exe"
+                        )
+                        if os.path.exists(setup_exe):
+                            self.safe_log(f"✅ 安装程序生成: {setup_exe}")
+                            shutil.copy2(
+                                setup_exe,
+                                os.path.join(
+                                    project_output_dir, f"{output_name}_Setup.exe"
+                                ),
+                            )
+                            self.safe_log(
+                                f"📦 安装程序大小: {os.path.getsize(setup_exe) / (1024 * 1024):.2f} MB"
+                            )
+                        else:
+                            import glob
+
+                            setup_files = glob.glob(
+                                os.path.join(
+                                    project_output_dir, "build", "**", "*_Setup.exe"
+                                ),
+                                recursive=True,
+                            )
+                            if setup_files:
+                                for sf in setup_files:
+                                    shutil.copy2(
+                                        sf,
+                                        os.path.join(
+                                            project_output_dir, os.path.basename(sf)
+                                        ),
+                                    )
+                                    self.safe_log(f"✅ 找到安装程序: {sf}")
+
+                        self.progress_var.set(100)
+                        self.progress_label.config(text="100% - 打包完成!")
+                        self.root.update_idletasks()
+
+                        self.safe_log(
+                            f"✅ Pynsist 打包成功！输出位置: {project_output_dir}"
+                        )
+                        self._save_config()
+                        return True
+                    else:
+                        self.safe_log(f"❌ 编译失败: {result.stderr}")
+                        return False
+                else:
+                    self.safe_log(f"⚠️ 未找到 NSIS 编译器，请安装 NSIS")
+                    self.safe_log(f"✅ NSIS 脚本已生成: {nsi_file}")
+                    self.safe_log(f"💡 您可以手动修改后运行 makensis 编译")
+                    self.progress_var.set(80)
+                    self.progress_label.config(
+                        text="80% - NSIS 脚本已生成（需手动编译）"
+                    )
+                    self.root.update_idletasks()
+                    return True
+            else:
+                self.safe_log(f"❌ 未找到生成的 NSIS 脚本: {nsi_file}")
+                return False
+
+        except Exception as e:
+            self.safe_log(f"❌ 打包出错: {e}")
+            return False
+        finally:
+            self.process = None
 
     def _package_py2app(self, input_file):
-        if sys.platform != "darwin":
-            self.safe_log("❌ py2app 仅支持 macOS")
+        """py2app 打包（仅 macOS）"""
+        if sys.platform != "darwin":  # darwin 是 macOS 的内核名称
+            self.safe_log("❌ py2app 只能在 macOS 系统上运行")
+            self.safe_log("   当前系统: " + sys.platform)
             return False
-        return self._generic_setup_build(input_file, "py2app", "py2app")
+
+        python_cmd = self._get_python()
+        if not python_cmd:
+            self.safe_log("❌ 未找到 Python")
+            return False
+
+        self.safe_log("⚠️ py2app 创建符合 macOS 规范的应用程序包 (.app)。")
+
+        input_file = self.input_path.get()
+        output_name = self.output_name.get()
+        base_output_dir = self.output_path.get()
+        project_output_dir = os.path.join(
+            base_output_dir, output_name.replace(" ", "_")
+        )
+        os.makedirs(project_output_dir, exist_ok=True)
+        self.safe_log(f"📁 输出目录: {project_output_dir}")
+
+        # 生成 setup.py（三引号顶格）
+        setup_content = f"""# -*- coding: utf-8 -*-
+from distutils.core import setup
+import py2app
+
+setup(
+    console=[{{"script": "{os.path.basename(input_file)}"}}],
+        options={{'py2app': {{
+            'compressed': True,
+            'optimize': 2,
+            'bundle_files': 3,  # 改为 3（Python 3.12+ 必须）
+            'includes': {self.hidden_imports_list},
+            'excludes': {self.exclude_list}
+        }}}},
+    zipfile=None
+)
+"""
+
+        setup_path = os.path.join(project_output_dir, "setup.py")
+        with open(setup_path, "w", encoding="utf-8") as f:
+            f.write(setup_content)
+
+        # 复制源文件到输出目录
+        shutil.copy2(input_file, project_output_dir)
+
+        # 打包命令
+        cmd = [python_cmd, "setup.py", "py2app"]
+        self.safe_log(f"🚀 开始 py2app 打包...")
+        self.safe_log(f"📝 命令: {' '.join(cmd)}")
+        self.root.update()
+
+        # 进度条初始化
+        self.progress_var.set(5)
+        self.progress_label.config(text="5% - 准备中...")
+        self.root.update_idletasks()
+
+        try:
+            startupinfo = get_startupinfo()
+            system_encoding = locale.getpreferredencoding()
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+                encoding=system_encoding,
+                errors="replace",
+                startupinfo=startupinfo,
+                cwd=project_output_dir,
+            )
+
+            line_count = 0
+            for line in iter(self.process.stdout.readline, ""):
+                if line.strip():
+                    self.safe_log(line.strip())
+                    line_count += 1
+
+                    # 根据输出行数更新进度
+                    if "Copying" in line or "copying" in line.lower():
+                        pct = min(20 + line_count // 2, 50)
+                        self.progress_var.set(pct)
+                        self.progress_label.config(text=f"{pct}% - 复制依赖...")
+                        self.root.update_idletasks()
+                    elif "Building" in line or "building" in line.lower():
+                        pct = min(50 + line_count // 3, 80)
+                        self.progress_var.set(pct)
+                        self.progress_label.config(text=f"{pct}% - 构建中...")
+                        self.root.update_idletasks()
+                    elif "copy" in line.lower() and "dll" in line.lower():
+                        pct = min(80 + line_count // 5, 95)
+                        self.progress_var.set(pct)
+                        self.progress_label.config(text=f"{pct}% - 复制DLL...")
+                        self.root.update_idletasks()
+
+                if (
+                    self.pack_btn["text"] == "▶开始打包"
+                    and self.process.poll() is None
+                ):
+                    self.process.terminate()
+                    break
+
+            self.process.wait()
+            success = self.process.returncode == 0
+
+            if success:
+                self.progress_var.set(100)
+                self.progress_label.config(text="100% - 完成!")
+                self.root.update_idletasks()
+
+                dist_dir = os.path.join(project_output_dir, "dist")
+                if os.path.exists(dist_dir):
+                    for item in os.listdir(dist_dir):
+                        src = os.path.join(dist_dir, item)
+                        dst = os.path.join(project_output_dir, item)
+                        if os.path.isdir(src):
+                            shutil.copytree(src, dst, dirs_exist_ok=True)
+                        else:
+                            shutil.copy2(src, dst)
+                self.safe_log(f"✅ py2app 打包完成！输出位置: {project_output_dir}")
+                self._save_config()
+            else:
+                self.safe_log("❌ py2app 打包失败")
+            return success
+        except Exception as e:
+            self.safe_log(f"❌ 打包出错: {e}")
+            return False
+        finally:
+            self.process = None
 
     def _start_fake_progress(self, update_interval=0.1, text="准备中...", min_progress=0, max_progress=80):
         """启动分段虚假模拟进度条（简化版）"""
@@ -4633,11 +7032,10 @@ setup(
             self.progress_label.config(text=text)
         self.root.update_idletasks()
 
- 
     # ==================== 状态栏 ====================
     def status_start(self, text, color="gray"):
         colors = {"gray": "#9e9e9e", "red": "#f44336", "orange": "#ff9800", "green": "#4caf50",
-                 "blue": "#2196f3", "purple": "#9c27b0", "cyan": "#00bcd4", "pink": "#e91e63"}
+                  "blue": "#2196f3", "purple": "#9c27b0", "cyan": "#00bcd4", "pink": "#e91e63"}
         self.status_color = colors.get(color, "#9e9e9e")
         self._target = 0
         self._current = 0
@@ -4650,6 +7048,8 @@ setup(
             w = max(self.status_canvas.winfo_width(), 200)
             self.status_bar_id = self.status_canvas.create_rectangle(0, 0, 0, 14, fill=self.status_color, outline='', tags="bar")
             self.status_var.set(text)
+            # 重新显示百分比标签
+            self.status_pct.pack(side=tk.LEFT, padx=2)
             self.status_pct.config(text="0%")
         self.root.after(0, _start)
 
@@ -4706,7 +7106,8 @@ setup(
             try:
                 self.status_canvas.pack_forget()
                 self.status_var.set(text)
-                self.status_pct.config(text="")
+                self.status_pct.config(text="")  # 清空百分比文字
+                self.status_pct.pack_forget()   # 隐藏百分比标签
                 self._current = 0
                 self._target = 0
                 self._smooth = False
@@ -4778,11 +7179,6 @@ setup(
             self.target_platform.set(data.get("target_platform", "current"))
             self.debug_mode.set(data.get("debug_mode", False))
             self.use_venv = data.get("use_venv", False)
-
-            # ❌ 不加载这些全局配置
-            # self.upx_path.set(data.get("upx_path", ""))
-            # self.use_upx.set(data.get("use_upx", True))
-            # self.custom_python_path.set(data.get("python_path", ""))
 
             if hasattr(self, 'venv_switch'):
                 self.venv_switch.set(self.use_venv)
@@ -4930,29 +7326,33 @@ setup(
             self.safe_log(f"❌ 导出失败: {e}")
 
     def _open_output(self):
-        # 获取输出文件（exe）的完整路径
-        exe_path = os.path.join(self.output_path.get(), self.output_name.get().replace(" ", "_"))
+        base_path = os.path.join(self.output_path.get(), self.output_name.get().replace(" ", "_"))
 
-        # 确保路径存在，如果不存在则尝试打开父目录
-        if not os.path.exists(exe_path):
-            exe_path = self.output_path.get()
-            if not os.path.exists(exe_path):
-                messagebox.showwarning("提示", f"目录不存在:\n{exe_path}")
-                return
+        # 去掉可能的 .exe 后缀
+        if base_path.lower().endswith('.exe'):
+            base_path = base_path[:-4]
 
-        # 关键修改：如果是文件，则获取其所在目录；如果是目录，则直接使用
-        if os.path.isfile(exe_path):
-            dir_to_open = os.path.dirname(exe_path)
+        # 优先打开文件夹
+        folder_path = base_path
+        if os.path.isdir(folder_path):
+            dir_to_open = folder_path
         else:
-            dir_to_open = exe_path
+            # 文件夹不存在，尝试打开父目录
+            dir_to_open = self.output_path.get()
 
-        # 跨平台打开文件夹
+        # 确保打开的是目录
+        if not os.path.isdir(dir_to_open):
+            messagebox.showwarning("提示", f"目录不存在:\n{dir_to_open}")
+            return
+
+        # 使用 explorer 打开文件夹（Windows）
         if sys.platform == "win32":
-            os.startfile(dir_to_open)
+            subprocess.run(f'explorer "{dir_to_open}"', shell=True)
         elif sys.platform == "darwin":
             subprocess.run(["open", dir_to_open])
         else:
             subprocess.run(["xdg-open", dir_to_open])
+
         self.safe_log(f"📂 已打开输出目录: {dir_to_open}")
 
     def _reset(self):
@@ -4997,6 +7397,26 @@ setup(
         return os.path.dirname(cl) if cl else None
 
 def main():
+    # ========== 强制切换到 exe 所在目录 ==========
+    if getattr(sys, 'frozen', False):
+        try:
+            if sys.platform == 'win32':
+                import ctypes
+                buffer = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+                ctypes.windll.kernel32.GetModuleFileNameW(
+                    ctypes.wintypes.HMODULE(0),
+                    buffer,
+                    ctypes.wintypes.MAX_PATH
+                )
+                exe_dir = os.path.dirname(buffer.value)
+            else:
+                exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+
+            if os.path.exists(exe_dir):
+                os.chdir(exe_dir)
+        except:
+            pass
+    # ===========================================
     try:
         app = PackageGUI()
         app.root.mainloop()
