@@ -1,13 +1,13 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Python脚本打包工具 - PyQt6完整版 """
 import sys, json, time, ast, shutil, subprocess, threading, multiprocessing, io
 import tempfile, webbrowser, fnmatch, glob, ctypes, platform as sys_platform
-import urllib.request, zipfile, traceback
+import urllib.request, zipfile, traceback, textwrap, random, socket
 from pathlib import Path
 from datetime import datetime
 from collections import Counter
-import os, re, stat,unicodedata,textwrap,difflib,io,functools,psutil,datetime
+import os, re, stat, unicodedata, difflib, io, functools, psutil, datetime
 from contextlib import redirect_stdout, redirect_stderr
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
@@ -19,7 +19,7 @@ try:
     MEDIA_AVAILABLE = True
 except (ImportError, AttributeError):
     MEDIA_AVAILABLE = False
-VERSION = "8.0.0"
+VERSION = "8.1.0"
 BUILD_DATE = datetime.datetime.now().strftime("%Y-%m-%d")
 AUTHOR = "wcj6376"
 # ==================== 镜像源 ====================
@@ -27,8 +27,7 @@ MIRRORS = [
     "https://pypi.tuna.tsinghua.edu.cn/simple",
     "https://mirrors.aliyun.com/pypi/simple/",
     "https://pypi.mirrors.ustc.edu.cn/simple/"
-]
-# 默认使用第一个
+    ]
 MIRROR = MIRRORS[0]
 # ==================== 常量定义 ====================
 STANDARD_LIBS = frozenset({
@@ -56,7 +55,7 @@ STANDARD_LIBS = frozenset({
     'unicodedata','unittest','urllib','uu','uuid','venv','warnings','wave',
     'weakref','webbrowser','winreg','wsgiref','xml','xmlrpc','zipapp','zipfile',
     'zipimport','zlib','_thread','__future__','zoneinfo','tomllib','typing_extensions'
-})
+    })
 MODULE_TO_PACKAGE = {
     'cv2':'opencv-python','PIL':'Pillow','skimage':'scikit-image','sklearn':'scikit-learn',
     'bs4':'beautifulsoup4','yaml':'PyYAML','Image':'Pillow','ImageDraw':'Pillow','docx':'python-docx',
@@ -82,7 +81,7 @@ MODULE_TO_PACKAGE = {
     'win32mapi':'pywin32','win32pdh':'pywin32','win32print':'pywin32',
     'win32trace':'pywin32','win32transaction':'pywin32','win32evtlog':'pywin32',
     'win32perf':'pywin32','win32ts':'pywin32','win32usb':'pywin32','win32verstamp':'pywin32'
-}
+    }
 EXCLUDE_PACKAGES = frozenset({
     '_pytest','astroid','asttokens','autopep8','backcall','black','build',
     'charset_normalizer','coverage','Cython','cython','debugpy','decorator','distribute',
@@ -96,7 +95,7 @@ EXCLUDE_PACKAGES = frozenset({
     'pytest','pywin32','qtconsole','stack_data','test','tests','tox','traitlets',
     'typed_ast','typeshed_client','unittest2','venv','virtualenv','wcwidth','wheel',
     'wmctrl','win32','win32con','yaml','pyyaml'
-})
+    })
 BASELINE_EXCLUDE = frozenset({
     # --- 测试框架 ---
     'pytest', '_pytest', 'py', 'nose', 'nose2', 'mock', 'unittest2', 'tox',
@@ -133,7 +132,7 @@ BASELINE_EXCLUDE = frozenset({
     # --- 标准库中的冗余部分 ---
     'lib2to3', 'pydoc_data', 'idlelib', 'turtledemo', 'tkinter.test',
     'test', 'tests', 'distutils.command.bdist_msi',
-})
+    })
 RUNTIME_SAFE_KEEP = frozenset({
     'six', 'typing_extensions', 'typing-extensions', 'packaging',
     'zipp', 'importlib_metadata', 'importlib-metadata',
@@ -142,8 +141,8 @@ RUNTIME_SAFE_KEEP = frozenset({
     'dateutil', 'certifi', 'idna', 'urllib3',
     'charset_normalizer', 'charset-normalizer',
     'et_xmlfile', 'et-xmlfile', 'attrs', 'attr',
-    'pyparsing', 'setuptools_rust', 'cffi', 'pycparser',
-})
+    'pyparsing', 'setuptools', 'setuptools_rust', 'cffi', 'pycparser',
+    })
 DEPENDENCY_MAP = {
     'requests': ['urllib3', 'certifi', 'idna', 'charset_normalizer'],
     'openpyxl': ['et_xmlfile'],
@@ -165,20 +164,19 @@ DEPENDENCY_MAP = {
     'win32com': ['pywin32'],
     }
 FILTER_MODULES = frozenset({
-    'PyInstaller', 'module', 'pyi_hooks_contrib', 'pyi_hooks',
-    'pip', 'wheel', 'distribute', 'pkg_resources',
-    'unittest', 'test', 'tests', 'pythonwin', 'pywin32_system32',
+    'PyInstaller', 'module', 'yaml', 'pyyaml',
+    'unittest', 'test', 'tests', 'pythonwin',
     'pytest', 'nose', 'mock', 'tox', 'coverage',
     'pylint', 'flake8', 'black', 'mypy', 'isort', 'autopep8',
-    'jupyter', 'ipython', 'notebook', 'ipykernel',
-    'pyinstaller', 'pyinstaller-hooks-contrib', 'pywin32-ctypes',
+    'jupyter', 'ipython', 'notebook', 'ipykernel', 
     'build', 'packaging', 'pep517', 'pyproject_hooks',
-    'yaml', 'pyyaml',
-})
+    'pyinstaller', 'pyi_hooks_contrib', 'pyi_hooks','pyinstaller-hooks-contrib', 
+    'pywin32_ctypes', 'pip', 'wheel', 'pkg_resources', 'distribute',
+    })
 NEVER_PACK = frozenset({
-    'pyinstaller', 'pyi_hooks_contrib', 'pyi_hooks',
-    'pywin32_ctypes', 'pip', 'wheel', 'pkg_resources', 'distribute'
-})
+    'pyinstaller', 'pyi_hooks_contrib', 'pyi_hooks','pyinstaller-hooks-contrib', 
+    'pywin32_ctypes', 'pip', 'wheel', 'pkg_resources', 'distribute',
+    })
 def get_startupinfo():
     """获取启动信息，隐藏控制台窗口"""
     if sys.platform == 'win32':
@@ -186,6 +184,87 @@ def get_startupinfo():
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         si.wShowWindow = subprocess.SW_HIDE
         return si
+    return None
+
+def _hidden_run(args, **kwargs):
+    """隐藏窗口运行 subprocess.run（兼容所有调用）"""
+    if sys.platform == 'win32':
+        if 'startupinfo' not in kwargs:
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = subprocess.SW_HIDE
+            kwargs['startupinfo'] = si
+        if 'creationflags' not in kwargs:
+            kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+    # 文本模式下未指定编码时默认 UTF-8（避免中文 Windows 上 GBK 输出导致解码崩溃）
+    if kwargs.get('text') and 'encoding' not in kwargs:
+        kwargs['encoding'] = 'utf-8'
+        kwargs['errors'] = 'replace'
+    return subprocess.run(args, **kwargs)
+
+def _hidden_popen(args, default_text=False, **kwargs):
+    """隐藏窗口运行 subprocess.Popen；default_text=True 时默认按 UTF-8 文本模式"""
+    if sys.platform == 'win32':
+        if 'startupinfo' not in kwargs:
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = subprocess.SW_HIDE
+            kwargs['startupinfo'] = si
+        if 'creationflags' not in kwargs:
+            kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+        if default_text and 'text' not in kwargs and 'encoding' not in kwargs:
+            kwargs['text'] = True
+            kwargs['encoding'] = 'utf-8'
+            kwargs['errors'] = 'replace'
+    return subprocess.Popen(args, **kwargs)
+
+def format_size(size, detail=False):
+    """格式化大小显示；detail=True 时附带括号内的细分信息"""
+    try:
+        if size <= 0:
+            return "0 B"
+        if size < 1024:
+            return f"{int(size)} B"
+        if size < 1024 * 1024:
+            return f"{size / 1024:.2f} KB ({int(size)} B)" if detail else f"{size / 1024:.0f} KB"
+        if size < 1024 * 1024 * 1024:
+            return f"{size / (1024 * 1024):.2f} MB ({int(size / 1024):,} KB)" if detail else f"{size / (1024 * 1024):.2f} MB"
+        return f"{size / (1024 * 1024 * 1024):.3f} GB ({int(size / (1024 * 1024)):,} MB)" if detail else f"{size / (1024 * 1024 * 1024):.3f} GB"
+    except Exception:
+        return "0 B"
+
+def run_pip_list(python_exe, timeout=30, on_error=None):
+    """运行 pip list --format=json（隔离环境、隐藏窗口），返回解析后的列表；失败返回 None"""
+    if not python_exe or not os.path.exists(python_exe):
+        return None
+    clean_env = {
+        'PATH': os.environ.get('PATH', ''),
+        'SYSTEMROOT': os.environ.get('SYSTEMROOT', ''),
+        'SystemRoot': os.environ.get('SystemRoot', ''),
+        'COMSPEC': os.environ.get('COMSPEC', ''),
+    }
+    clean_env['PYTHONNOUSERSITE'] = '1'
+    clean_env['PYTHONSAFEPATH'] = '1'
+    startupinfo = None
+    creationflags = 0
+    if sys.platform == 'win32':
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        creationflags = subprocess.CREATE_NO_WINDOW
+    try:
+        result = subprocess.run(
+            [python_exe, '-m', 'pip', 'list', '--format=json'],
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            env=clean_env, startupinfo=startupinfo, creationflags=creationflags,
+            timeout=timeout
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout)
+    except Exception as e:
+        if on_error:
+            on_error(e)
+        return None
     return None
 
 def get_exe_directory():
@@ -196,9 +275,6 @@ APP_BASE_PATH = get_exe_directory()
 
 def _get_real_python():
     """获取真实的Python解释器路径"""
-    import os
-    import subprocess
-    import sys
     # 源码模式
     if not getattr(sys, 'frozen', False):
         return sys.executable
@@ -225,78 +301,28 @@ def _get_real_python():
             return result.returncode == 0 and ('Python' in result.stdout or 'Python' in result.stderr)
         except:
             return False
-        if sys.platform == 'win32':
-            try:
-                result = self._run_hidden(['py', '-c', 'import sys; print(sys.executable)'],
-                                          capture_output=True, text=True, timeout=5,
-                                          startupinfo=get_startupinfo())
-                if result.returncode == 0 and result.stdout.strip():
-                    py_path = result.stdout.strip()
-                    if is_valid_python(py_path):
-                        return py_path
-            except Exception:
-                pass
-        for py_name in ['python3', 'python']:
-            try:
-                result = self._run_hidden([py_name, '-c', 'import sys; print(sys.executable)'],
-                                          capture_output=True, text=True, timeout=5,
-                                          startupinfo=get_startupinfo())
-                if result.returncode == 0 and result.stdout.strip():
-                    py_path = result.stdout.strip()
-                    if is_valid_python(py_path):
-                        return py_path
-            except Exception:
-                pass
-        if sys.platform == 'win32':
-            username = os.environ.get('USERNAME', '')
-            default_paths = [
-                r'C:\Python312\python.exe',
-                r'C:\Python311\python.exe',
-                r'C:\Python310\python.exe',
-                r'C:\Python39\python.exe',
-                rf'C:\Users\{username}\AppData\Local\Programs\Python\Python312\python.exe',
-                rf'C:\Users\{username}\AppData\Local\Programs\Python\Python311\python.exe',
-                rf'C:\Users\{username}\AppData\Local\Programs\Python\Python310\python.exe',
-            ]
-        elif sys.platform == 'darwin':
-            default_paths = [
-                '/usr/local/bin/python3',
-                '/usr/bin/python3',
-                '/opt/homebrew/bin/python3',
-            ]
-        else:
-            default_paths = [
-                '/usr/bin/python3',
-                '/usr/local/bin/python3',
-                '/usr/bin/python',
-            ]
-        for p in default_paths:
-            if is_valid_python(p):
-                return p
-        if hasattr(sys, '_MEIPASS'):
-            meipass = sys._MEIPASS
-            search_dir = os.path.dirname(meipass)
-            for root, dirs, files in os.walk(search_dir):
-                for f in files:
-                    if f.lower() in ('python.exe', 'python3.exe', 'python'):
-                        p = os.path.join(root, f)
-                        if is_valid_python(p):
-                            return p
-                if len(root) > len(search_dir) + 100:
-                    break
-        import shutil
-        for cmd in ['python3', 'python']:
-            p = shutil.which(cmd)
-            if p and is_valid_python(p):
-                return p
-        return None
+@functools.lru_cache(maxsize=1024)
+
+def get_short_path(path):
+    """获取 Windows 短路径（8.3格式），仅当路径包含空格时使用（带缓存）"""
+    if sys.platform != 'win32' or not path or ' ' not in path:
+        return path
+    try:
+        GetShortPathName = ctypes.windll.kernel32.GetShortPathNameW
+        buffer_len = GetShortPathName(path, None, 0)
+        if buffer_len == 0:
+            return path
+        buffer = ctypes.create_unicode_buffer(buffer_len)
+        GetShortPathName(path, buffer, buffer_len)
+        return buffer.value if buffer.value else path
+    except Exception:
+        return path
 
 def get_cache_dir():
     """获取可写的缓存目录"""
     exe_dir = get_exe_directory()
     if os.access(exe_dir, os.W_OK):
         return exe_dir
-    import tempfile
     fallback = os.path.join(tempfile.gettempdir(), "PyPackTool")
     os.makedirs(fallback, exist_ok=True)
     return fallback
@@ -306,13 +332,30 @@ def load_dep_map():
     global DEPENDENCY_MAP
     if os.path.exists(DEP_MAP_FILE):
         try:
-            import tomllib
-            with open(DEP_MAP_FILE, 'rb') as f:
-                data = tomllib.load(f)
-                if data:
-                    DEPENDENCY_MAP = data
-                    return
-        except Exception:
+            with open(DEP_MAP_FILE, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+            new_map = {}
+            for line in content.split('\n'):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '=' in line:
+                    key, val = line.split('=', 1)
+                    key = key.strip()
+                    val = val.strip()
+                    try:
+                        deps = ast.literal_eval(val)
+                        if isinstance(deps, list):
+                            new_map[key] = deps
+                    except:
+                        # 降级解析：提取所有引号内的内容
+                        deps = re.findall(r'"([^"]+)"', val)
+                        if deps:
+                            new_map[key] = deps
+            if new_map:
+                DEPENDENCY_MAP = new_map
+                return
+        except Exception as e:
             pass
     # ===== 不存在则用源码中的 DEPENDENCY_MAP 创建 =====
     try:
@@ -320,7 +363,7 @@ def load_dep_map():
             for mod, deps in DEPENDENCY_MAP.items():
                 deps_str = ', '.join([f'"{d}"' for d in deps])
                 f.write(f'{mod} = [{deps_str}]\n')
-    except Exception:
+    except Exception as e:
         pass
 
 def load_cache():
@@ -350,28 +393,74 @@ def save_cache(cache):
 
 def now_str():
     """返回当前时间的字符串格式 HH:MM:SS.mmm"""
-    import datetime
     now = datetime.datetime.now()
     return now.strftime("%H:%M:%S") + f".{now.microsecond//1000:03d}"
 
+def is_if_main(node):
+    """判断 AST 节点是否为 if __name__ == '__main__':"""
+    return (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == '__name__')
+
+def scan_imports_from_source(source, on_parse_error=None):
+    """扫描源码中的 import，返回 (imports:set, uses_tkinter:bool)；AST 失败时降级为正则解析"""
+    imports = set()
+    uses_tkinter = False
+    try:
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    mod = alias.name.split('.')[0]
+                    if mod == 'tkinter':
+                        uses_tkinter = True
+                        imports.add('tk')
+                    elif mod == 'tk':
+                        imports.add('tk')
+                    elif mod not in STANDARD_LIBS:
+                        imports.add(mod)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    mod = node.module.split('.')[0]
+                    if mod == 'tkinter':
+                        uses_tkinter = True
+                        imports.add('tk')
+                    elif mod == 'tk':
+                        imports.add('tk')
+                    elif mod not in STANDARD_LIBS:
+                        imports.add(mod)
+    except Exception as e:
+        if on_parse_error:
+            on_parse_error(e)
+        for line in source.split('\n'):
+            line = line.strip()
+            if line.startswith('import ') or line.startswith('from '):
+                if 'tkinter' in line:
+                    uses_tkinter = True
+                    imports.add('tk')
+                else:
+                    match = re.match(r'(?:from\s+(\S+)\s+import|import\s+(\S+))', line)
+                    if match:
+                        mod = match.group(1) or match.group(2)
+                        if mod:
+                            mod = mod.split('.')[0]
+                            if mod not in STANDARD_LIBS:
+                                imports.add(mod)
+    return imports, uses_tkinter
+
 def pip_install(python_exe, package, env=None, timeout=300, quiet=False):
-    """
-    安装包，失败时自动切换镜像源
-    返回: (success, result)
-    """
+    """安装包，失败时自动切换镜像源返回: (success, result)"""
     global MIRROR
     if env is None:
         env = {'PATH': os.environ.get('PATH', '')}
         if sys.platform == 'win32':
             env['SYSTEMROOT'] = os.environ.get('SYSTEMROOT', '')
-    # 构建参数
     cmd = [python_exe, '-m', 'pip', 'install', package]
     if quiet:
         cmd.append('-q')
     cmd.append('--no-warn-script-location')
     for mirror in MIRRORS:
         try:
-            # 每次用当前镜像
             cmd_with_mirror = cmd + ['-i', mirror]
             result = subprocess.run(
                 cmd_with_mirror,
@@ -381,6 +470,17 @@ def pip_install(python_exe, package, env=None, timeout=300, quiet=False):
             )
             if result.returncode == 0:
                 MIRROR = mirror
+                # ===== 新增：安装 pywin32 后自动激活 =====
+                if package.lower() == 'pywin32' and sys.platform == 'win32':
+                    try:
+                        subprocess.run(
+                            [python_exe, '-c', 'import pywin32_postinstall; pywin32_postinstall.install()'],
+                            capture_output=True, text=True,
+                            env=env,
+                            timeout=30
+                        )
+                    except Exception as e:
+                        pass  # 激活失败不影响安装成功返回
                 return True, result
         except subprocess.TimeoutExpired:
             continue
@@ -403,13 +503,7 @@ class PythonInstallWorker(QThread):
         self._cancel = True
 
     def run(self):
-        import urllib.request
         import ssl
-        import tempfile
-        import os
-        import subprocess
-        import time
-        import sys
         try:
             version = "3.12.10"
             temp_dir = tempfile.gettempdir()
@@ -547,16 +641,10 @@ class PythonInstallWorker(QThread):
             else:
                 self.finished_signal.emit(False, f"安装失败 (返回码: {process.returncode})")
         except Exception as e:
-            import traceback
             self.finished_signal.emit(False, f"错误: {str(e)}")
 
 def check_python_installed():
     """检测系统是否安装了 Python"""
-    import subprocess
-    import sys
-    import os
-    import shutil
-    import glob
     IS_FROZEN = getattr(sys, 'frozen', False)
 
     def is_valid_system_python(path):
@@ -737,8 +825,6 @@ def check_python_installed():
 
 def ensure_python_on_startup():
     """启动时检测 Python"""
-    import sys
-    import os
     if not getattr(sys, 'frozen', False):
         return True
     has_python, version = check_python_installed()
@@ -748,7 +834,6 @@ def ensure_python_on_startup():
     print("[Main] 未检测到系统Python，后台静默安装...")
     if sys.platform == "win32":
         try:
-            import ctypes
             if not ctypes.windll.shell32.IsUserAnAdmin():
                 print("[Main] 警告: 非管理员模式，安装可能失败")
         except:
@@ -825,8 +910,6 @@ def ensure_python_on_startup():
 
     def restart_app():
         """重启程序"""
-        import subprocess
-        import sys
         tip_widget.close()
         subprocess.Popen([sys.executable] + sys.argv)
         sys.exit(0)
@@ -838,8 +921,6 @@ def ensure_python_on_startup():
 
 def patch_subprocess_hide_window():
     """ 所有 subprocess 调用默认隐藏 cmd 窗口（Windows）"""
-    import subprocess
-    import sys
     if sys.platform == "win32":
         _orig_run = subprocess.run
         _orig_popen = subprocess.Popen
@@ -872,22 +953,6 @@ def patch_subprocess_hide_window():
         subprocess.call = _patched_call
         subprocess.check_call = _patched_check_call
         subprocess.check_output = _patched_check_output
-
-def get_short_path(self, path):
-    """获取 Windows 短路径（8.3格式）"""
-    if sys.platform != 'win32':
-        return path
-    try:
-        import ctypes
-        GetShortPathName = ctypes.windll.kernel32.GetShortPathNameW
-        buffer_len = GetShortPathName(path, None, 0)
-        if buffer_len == 0:
-            return path
-        buffer = ctypes.create_unicode_buffer(buffer_len)
-        GetShortPathName(path, buffer, buffer_len)
-        return buffer.value if buffer.value else path
-    except Exception:
-        return path
 
 def show_msg(parent, title, text, timeout=0, buttons='ok'):
     """
@@ -959,45 +1024,7 @@ class AnalyzeUsedThread(QThread):
         imports = set()
         uses_tkinter = False
         # ===== 1. AST 解析所有 import =====
-        try:
-            tree = ast.parse(source)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        mod = alias.name.split('.')[0]
-                        if mod == 'tkinter':
-                            uses_tkinter = True
-                            imports.add('tk')
-                        elif mod == 'tk':
-                            imports.add('tk')
-                        elif mod not in STANDARD_LIBS:
-                            imports.add(mod)
-                elif isinstance(node, ast.ImportFrom):
-                    if node.module:
-                        mod = node.module.split('.')[0]
-                        if mod == 'tkinter':
-                            uses_tkinter = True
-                            imports.add('tk')
-                        elif mod == 'tk':
-                            imports.add('tk')
-                        elif mod not in STANDARD_LIBS:
-                            imports.add(mod)
-        except Exception:
-            import re
-            for line in source.split('\n'):
-                line = line.strip()
-                if line.startswith('import ') or line.startswith('from '):
-                    if 'tkinter' in line:
-                        uses_tkinter = True
-                        imports.add('tk')
-                    else:
-                        match = re.match(r'(?:from\s+(\S+)\s+import|import\s+(\S+))', line)
-                        if match:
-                            mod = match.group(1) or match.group(2)
-                            if mod:
-                                mod = mod.split('.')[0]
-                                if mod not in STANDARD_LIBS:
-                                    imports.add(mod)
+        imports, uses_tkinter = scan_imports_from_source(source)
         # ===== 2. 过滤（使用全局 FILTER_MODULES） =====
         result = []
         for mod in sorted(imports):
@@ -1238,10 +1265,6 @@ class CodePreviewDialog(QDialog):
 
     def _update_status(self):
         self.status_label.setText(f"左侧: {'已修改' if self.left_modified else '未修改'} | 右侧: {'已修改' if self.right_modified else '未修改'}")
-
-    def _log(self, msg):
-        if self.parent() and hasattr(self.parent(), 'safe_log'):
-            self.parent().safe_log(msg)
 
     def accept(self):
         """用户确认应用修复"""
@@ -1516,7 +1539,6 @@ class CodeCompareDialog(QDialog):
 
     def _find_matching_functions(self, left_name, right_names):
         """找到匹配的右侧函数名（优先精确匹配）"""
-        import difflib
         if left_name in right_names:
             return left_name, "精确匹配"
         if not self.fuzzy_match_cb.isChecked():
@@ -1538,7 +1560,6 @@ class CodeCompareDialog(QDialog):
 
     def _count_diff_lines(self, left_text, right_text):
         """统计两个文本的差异行数"""
-        import difflib
         differ = difflib.SequenceMatcher(None, left_text.splitlines(), right_text.splitlines())
         added = 0
         removed = 0
@@ -2091,11 +2112,14 @@ class SystemMonitorThread(QThread):
             return
         try:
             import clr
+            # 尝试多种路径找 dll
             dll_paths = [
                 'LibreHardwareMonitorLib.dll',
                 './LibreHardwareMonitorLib.dll',
                 '../LibreHardwareMonitorLib.dll',
                 os.path.join(os.path.dirname(__file__), 'LibreHardwareMonitorLib.dll'),
+                os.path.join(get_exe_directory(), 'LibreHardwareMonitorLib.dll'),
+                os.path.join(get_exe_directory(), 'tools', 'LibreHardwareMonitorLib.dll'),
             ]
             dll_loaded = False
             for dll_path in dll_paths:
@@ -2141,7 +2165,6 @@ class SystemMonitorThread(QThread):
     def _get_temp_psutil(self):
         """通过 psutil 获取温度（Linux/macOS 有效，返回 float）"""
         try:
-            import psutil
             temps = psutil.sensors_temperatures()
             if not temps:
                 return None
@@ -2164,11 +2187,29 @@ class SystemMonitorThread(QThread):
         return None
 
     def _get_temp_wmic(self):
-        """通过 wmic 命令获取温度（Windows 备用，返回 float）"""
+        """通过 wmic/powershell 命令获取温度（Windows 备用，返回 float）"""
         if sys.platform != 'win32':
             return None
         try:
-            import subprocess
+            # 优先用 powershell（Win11 24H2 已移除 wmic）
+            ps_cmd = (
+                'Get-CimInstance -Namespace root/wmi '
+                '-ClassName MSAcpi_ThermalZoneTemperature | '
+                'Select-Object -ExpandProperty CurrentTemperature'
+            )
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command', ps_cmd],
+                capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            lines = [l.strip() for l in result.stdout.split('\n') 
+                     if l.strip().replace('.', '').isdigit()]
+            if lines:
+                temp_k = float(lines[0]) / 10.0
+                temp_c = temp_k - 273.15
+                if -10 < temp_c < 120:
+                    return float(temp_c)
+            # fallback 到 wmic（旧系统）
             result = subprocess.run(
                 ['wmic', r'/namespace:\\root\wmi',
                  'PATH', 'MSAcpi_ThermalZoneTemperature', 
@@ -2218,10 +2259,6 @@ class SystemMonitorThread(QThread):
                 return "#4CAF50"
 
     def run(self):
-        try:
-            import psutil
-        except ImportError:
-            return
         while self._is_running:
             try:
                 cpu_percent = psutil.cpu_percent(interval=1)
@@ -2283,12 +2320,10 @@ class PackThread(QThread):
             self._mock_progress = 0
             self._start_mock_progress()
             import select
-            import sys
             while self._is_running and process.poll() is None:
                 try:
                     if sys.platform == 'win32':
                         # Windows使用timeout轮询
-                        import time
                         time.sleep(0.1)
                         line = process.stdout.readline()
                         if line:
@@ -2448,10 +2483,12 @@ class ContentLoader(QThread):
 ═══════════════════════════════════
 🚀 新功能
 -----------
+• 增加多编译后端支持
+• 增加多闭包依赖开关
 • 增加附属依赖可配置
-• 增加是否自动排除选项
-• 增加图标转base64
-【版本 8.0.0】- 2026-08-01
+• 增加可自动排除开关
+• 增加图标转base64码
+【版本 8.1.0】- 2026-08-10
 ═══════════════════════════════════
 🚀 新功能
 -----------
@@ -2907,13 +2944,6 @@ class AboutDialog(QDialog):
 
     def update_source_code(self):
         """从 GitHub 下载最新源码"""
-        import os
-        import sys
-        import tempfile
-        import shutil
-        import threading
-        import urllib.request
-        import time
         from PyQt6.QtCore import QTimer, QObject, pyqtSignal
         self.accept()
         # ===== 获取主窗口实例 =====
@@ -3018,8 +3048,6 @@ class AboutDialog(QDialog):
 
     def should_show_dev_mode(self):
         """判断是否显示开发模式"""
-        import sys
-        import os
         if hasattr(sys, '_MEIPASS'):
             return False
         if '__compiled__' in globals():
@@ -3054,13 +3082,6 @@ class AboutDialog(QDialog):
         self.tutorial_text.setText("⏳ 正在重新加载使用教程...")
         self.load_content_async()
 
-    def send_email(self):
-        """发送邮件"""
-        try:
-            webbrowser.open("mailto:your-email@example.com?subject=Python打包工具反馈")
-        except Exception as e:
-            QMessageBox.warning(self, "错误", f"无法打开邮件客户端: {str(e)}")
-
     def open_about_files(self):
         """打开编辑内容文件"""
         try:
@@ -3079,7 +3100,6 @@ class AboutDialog(QDialog):
                 if os.path.exists("TUTORIAL.txt"):
                     os.startfile("TUTORIAL.txt")
             else:
-                import subprocess
                 if os.path.exists("CHANGELOG.txt"):
                     self._popen_hidden(["xdg-open", "CHANGELOG.txt"])
                 if os.path.exists("TUTORIAL.txt"):
@@ -3094,6 +3114,11 @@ class AboutDialog(QDialog):
                 self.loader.quit()
                 self.loader.wait()
             self.loader = None
+        # ===== 退出前保存缓存（防止zig等信息丢失）=====
+        try:
+            self.save_cache()
+        except Exception:
+            pass
         event.accept()
 
 class DepManagerDialog(QDialog):
@@ -3204,12 +3229,30 @@ class DepManagerDialog(QDialog):
     def _save_error(self, error):
         QMessageBox.critical(self, "保存失败", error)
 
-class StripedProgressBar(QProgressBar):
-    """彩色条纹进度条 - 色彩丰富"""
+class _StyledProgressBar(QProgressBar):
+    """通用样式进度条基类（各主题仅差 QSS、前缀与文字格式）"""
+    _QSS = ""
+    _MIN_HEIGHT = 20
+    _INIT_SET_VALUE = True  # 是否在构造时调用 setValue(0)
+    _FORMAT_PREFIX = ""  # 格式前缀（如 🌿 ）
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(20)
-        self.setStyleSheet("""
+        self.setMinimumHeight(self._MIN_HEIGHT)
+        self.setStyleSheet(self._QSS)
+        if self._INIT_SET_VALUE:
+            self.setValue(0)
+
+    def setValue(self, value):
+        super().setValue(value)
+        self.setFormat(self._format_text(value))
+
+    def _format_text(self, value):
+        return f"{self._FORMAT_PREFIX}{value}%"
+
+class StripedProgressBar(_StyledProgressBar):
+    """彩色条纹进度条 - 色彩丰富"""
+    _MIN_HEIGHT = 20
+    _QSS = """
             QProgressBar {
                 border: none;
                 border-radius: 10px;
@@ -3231,26 +3274,21 @@ class StripedProgressBar(QProgressBar):
                     stop: 1 #ff6b6b
                 );
             }
-        """)
-        self.setValue(0)
-
-    def setValue(self, value):
-        super().setValue(value)
+        """
+    @staticmethod
+    def _format_text(value):
         if value < 30:
-            self.setFormat(f"🔍 分析中... {value}%")
-        elif value < 60:
-            self.setFormat(f"⚙️ 编译中... {value}%")
-        elif value < 90:
-            self.setFormat(f"🚀 打包中... {value}%")
-        else:
-            self.setFormat(f"✅ 完成！ {value}%")
+            return f"🔍 分析中... {value}%"
+        if value < 60:
+            return f"⚙️ 编译中... {value}%"
+        if value < 90:
+            return f"🚀 打包中... {value}%"
+        return f"✅ 完成！ {value}%"
 
-class EmojiProgressBar(QProgressBar):
+class EmojiProgressBar(_StyledProgressBar):
     """表情动画进度条 - 简洁风格"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumHeight(24)
-        self.setStyleSheet("""
+    _MIN_HEIGHT = 24
+    _QSS = """
             QProgressBar {
                 border: 2px solid #0984e3;
                 border-radius: 12px;
@@ -3268,37 +3306,25 @@ class EmojiProgressBar(QProgressBar):
                     stop: 1 #0984e3
                 );
             }
-        """)
-        self.setValue(0)
-
-    def setValue(self, value):
-        super().setValue(value)
+        """
+    @staticmethod
+    def _format_text(value):
         if value < 20:
-            self.setFormat(f"🌙 初始化... {value}%")
-        elif value < 40:
-            self.setFormat(f"📦 收集依赖... {value}%")
-        elif value < 60:
-            self.setFormat(f"⚡ 编译中... {value}%")
-        elif value < 80:
-            self.setFormat(f"🎯 打包中... {value}%")
-        else:
-            self.setFormat(f"✨ 完成！ {value}%")
+            return f"🌙 初始化... {value}%"
+        if value < 40:
+            return f"📦 收集依赖... {value}%"
+        if value < 60:
+            return f"⚡ 编译中... {value}%"
+        if value < 80:
+            return f"🎯 打包中... {value}%"
+        return f"✨ 完成！ {value}%"
 
-class WaveProgressBar(QWidget):
-    """波浪进度条"""
+class _CustomProgressBase(QWidget):
+    """自定义绘制进度条公共接口（兼容 QProgressBar 调用方式）"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self._value = 0
-        self.setFixedHeight(60)
-        self.offset = 0
-        self.timer = QTimer()
-        self.timer.timeout.connect(self._animate)
-        self.timer.start(50)
         self._format = ""
-        self.setValue(0)
-
-    def setValue(self, value):
-        self._value = value
 
     def value(self):
         return self._value
@@ -3310,15 +3336,34 @@ class WaveProgressBar(QWidget):
     def setMaximum(self, value):
         pass
 
+    def setMinimumHeight(self, height):
+        self.setFixedHeight(height)
+        return self
+
+class WaveProgressBar(_CustomProgressBase):
+    """波浪进度条"""
+    _BG_COLOR = QColor(240, 240, 240)
+    _GRAD_START = QColor(76, 217, 100)
+    _GRAD_END = QColor(52, 199, 89)
+    _TEXT_COLOR = QColor(51, 51, 51)
+    _FONT = QFont("Arial", 12, QFont.Weight.Bold)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(60)
+        self.offset = 0
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._animate)
+        self.timer.start(50)
+        self.setValue(0)
+
+    def setValue(self, value):
+        self._value = value
+
     def setFormat(self, format_str):
         self._format = format_str
         if '%' in format_str:
             self._format = format_str.replace('%', f'{self._value}%')
         self.update()
-
-    def setMinimumHeight(self, height):
-        self.setFixedHeight(height)
-        return self
 
     def _animate(self):
         self.offset += 5
@@ -3328,7 +3373,7 @@ class WaveProgressBar(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
-        painter.fillRect(0, 0, w, h, QColor(240, 240, 240))
+        painter.fillRect(0, 0, w, h, self._BG_COLOR)
         wave_width = self._value / 100 * w
         path = QPainterPath()
         path.moveTo(0, h)
@@ -3338,46 +3383,36 @@ class WaveProgressBar(QWidget):
         path.lineTo(wave_width, h)
         path.closeSubpath()
         gradient = QLinearGradient(0, 0, wave_width, 0)
-        gradient.setColorAt(0, QColor(76, 217, 100))
-        gradient.setColorAt(1, QColor(52, 199, 89))
+        gradient.setColorAt(0, self._GRAD_START)
+        gradient.setColorAt(1, self._GRAD_END)
         painter.fillPath(path, gradient)
-        painter.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        painter.setPen(QColor(51, 51, 51))
+        painter.setFont(self._FONT)
+        painter.setPen(self._TEXT_COLOR)
         if self._format:
             display_text = self._format
         else:
             display_text = f"{self._value}%"
         painter.drawText(0, 0, w, h, Qt.AlignmentFlag.AlignCenter, display_text)
 
-class DotProgressBar(QWidget):
+class DotProgressBar(_CustomProgressBase):
     """点阵进度条"""
+    _FILL_START = QColor(76, 217, 100)
+    _FILL_END = QColor(52, 199, 89)
+    _EMPTY_COLOR = QColor(200, 200, 200)
+    _TEXT_COLOR = QColor(51, 51, 51)
+    _FONT = QFont("Arial", 9)
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._value = 0
         self.setFixedHeight(30)
-        self._format = ""
         self.setValue(0)
 
     def setValue(self, value):
         self._value = value
         self.update()
 
-    def value(self):
-        return self._value
-
-    def setMinimum(self, value):
-        pass
-
-    def setMaximum(self, value):
-        pass
-
     def setFormat(self, format_str):
         self._format = format_str
         self.update()
-
-    def setMinimumHeight(self, height):
-        self.setFixedHeight(height)
-        return self
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -3397,24 +3432,23 @@ class DotProgressBar(QWidget):
             radius = dot_radius
             if i < filled:
                 gradient = QRadialGradient(x, y, radius)
-                gradient.setColorAt(0, QColor(76, 217, 100))
-                gradient.setColorAt(1, QColor(52, 199, 89))
+                gradient.setColorAt(0, self._FILL_START)
+                gradient.setColorAt(1, self._FILL_END)
                 painter.setBrush(gradient)
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(QPointF(x, y), radius, radius)
             else:
-                painter.setBrush(QColor(200, 200, 200))
+                painter.setBrush(self._EMPTY_COLOR)
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(QPointF(x, y), radius, radius)
-        painter.setFont(QFont("Arial", 9))
-        painter.setPen(QColor(51, 51, 51))
+        painter.setFont(self._FONT)
+        painter.setPen(self._TEXT_COLOR)
 
-class GreenProgressBar(QProgressBar):
+class GreenProgressBar(_StyledProgressBar):
     """薄荷绿进度条"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumHeight(20)
-        self.setStyleSheet("""
+    _MIN_HEIGHT = 20
+    _FORMAT_PREFIX = "🌿 "
+    _QSS = """
             QProgressBar {
                 border: none;
                 border-radius: 10px;
@@ -3427,19 +3461,14 @@ class GreenProgressBar(QProgressBar):
                 border-radius: 10px;
                 background-color: #4caf50;
             }
-        """)
-        self.setValue(0)
+        """
 
-    def setValue(self, value):
-        super().setValue(value)
-        self.setFormat(f"🌿 {value}%")
-
-class PinkProgressBar(QProgressBar):
+class PinkProgressBar(_StyledProgressBar):
     """樱花粉进度条"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumHeight(20)
-        self.setStyleSheet("""
+    _MIN_HEIGHT = 20
+    _INIT_SET_VALUE = False  # 保持原行为：构造时不设置格式
+    _FORMAT_PREFIX = "🌸 "
+    _QSS = """
             QProgressBar {
                 border: none;
                 border-radius: 10px;
@@ -3452,18 +3481,13 @@ class PinkProgressBar(QProgressBar):
                 border-radius: 10px;
                 background-color: #e91e63;
             }
-        """)
+        """
 
-    def setValue(self, value):
-        super().setValue(value)
-        self.setFormat(f"🌸 {value}%")
-
-class PurpleProgressBar(QProgressBar):
+class PurpleProgressBar(_StyledProgressBar):
     """星际紫进度条"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumHeight(20)
-        self.setStyleSheet("""
+    _MIN_HEIGHT = 20
+    _FORMAT_PREFIX = "🌌 "
+    _QSS = """
             QProgressBar {
                 border: none;
                 border-radius: 10px;
@@ -3480,19 +3504,13 @@ class PurpleProgressBar(QProgressBar):
                     stop: 1 #a855f7
                 );
             }
-        """)
-        self.setValue(0)
+        """
 
-    def setValue(self, value):
-        super().setValue(value)
-        self.setFormat(f"🌌 {value}%")
-
-class BlueProgressBar(QProgressBar):
+class BlueProgressBar(_StyledProgressBar):
     """深海蓝进度条"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumHeight(20)
-        self.setStyleSheet("""
+    _MIN_HEIGHT = 20
+    _FORMAT_PREFIX = "🌊 "
+    _QSS = """
             QProgressBar {
                 border: none;
                 border-radius: 10px;
@@ -3509,12 +3527,7 @@ class BlueProgressBar(QProgressBar):
                     stop: 1 #42a5f5
                 );
             }
-        """)
-        self.setValue(0)
-
-    def setValue(self, value):
-        super().setValue(value)
-        self.setFormat(f"🌊 {value}%")
+        """
 
 class CollapsibleBox(QWidget):
     def __init__(self, title="", parent=None):
@@ -3689,8 +3702,15 @@ class PackageWorker(QThread):
         # ===== 新增：日志缓冲系统 =====
         self._log_buffer = []
         self._last_log_flush = 0
-        import threading
         self._log_lock = threading.Lock()
+        # ===== Zig/Clang 属性（从 config 读取）=====
+        self._cached_has_zig = config.get('has_zig', False)
+        self._cached_zig_path = config.get('zig_path', '')
+        self._cached_zig_type = config.get('zig_type', '')
+        self._cached_zig_version = config.get('zig_version', '')
+        self._cached_has_clang = config.get('has_clang', False)
+        self._cached_clang_path = config.get('clang_path', '')
+        self._cached_clang_version = config.get('clang_version', '')
     # ===== 类级别缓存（所有实例共享）=====
     _ccache_cache = None
     _ccache_cache_time = 0
@@ -3698,7 +3718,6 @@ class PackageWorker(QThread):
 
     def _find_best_ccache_cached(self, project_dir=None):
         """带缓存的ccache查找，避免每次打包都遍历文件系统"""
-        import time
         now = time.time()
         if (PackageWorker._ccache_cache is not None and 
             now - PackageWorker._ccache_cache_time < self._CCACHE_TTL):
@@ -3708,18 +3727,8 @@ class PackageWorker(QThread):
         PackageWorker._ccache_cache_time = now
         return result
 
-    def _buffered_log(self, msg):
-        """缓冲日志，200ms批量发射一次，减少Qt信号开销"""
-        import time
-        with self._log_lock:
-            self._log_buffer.append(msg)
-        now = time.time()
-        if now - self._last_log_flush > 0.2:
-            self._flush_log()
-
     def _flush_log(self):
         """强制刷新日志缓冲"""
-        import time
         with self._log_lock:
             if self._log_buffer:
                 batch = "\n".join(self._log_buffer)
@@ -3785,10 +3794,12 @@ class PackageWorker(QThread):
                     if key in os.environ:
                         env[key] = os.environ[key]
                 # 2. PATH：虚拟环境自己的目录
-                python_dir = os.path.dirname(target_python)
+                python_dir = os.path.dirname(target_python)  # common_venv/Scripts
+                venv_root = os.path.dirname(python_dir)      # common_venv 根目录
                 path_dirs = [
-                    python_dir,  
-                    os.path.join(python_dir, 'Scripts'),  
+                    python_dir,                    # common_venv/Scripts
+                    os.path.join(python_dir, 'Scripts'),  # common_venv/Scripts/Scripts
+                    os.path.join(venv_root, 'bin'),       # common_venv/bin
                 ]
                 # 加上Windows系统目录
                 system_paths = [
@@ -3806,17 +3817,17 @@ class PackageWorker(QThread):
                 venv_site_packages = self.config.get('venv_site_packages')
                 if venv_site_packages and os.path.exists(venv_site_packages):
                     pythonpath_dirs.append(venv_site_packages)
-                # Python 标准库 Lib（虚拟环境自己的）
-                python_lib = os.path.join(python_dir, 'Lib')
+                # Python 标准库 Lib（虚拟环境自己的）-> 使用 venv_root
+                python_lib = os.path.join(venv_root, 'Lib')
                 if os.path.exists(python_lib) and python_lib not in pythonpath_dirs:
                     pythonpath_dirs.append(python_lib)
-                # Python DLLs（虚拟环境自己的）
-                python_dlls = os.path.join(python_dir, 'DLLs')
+                # Python DLLs（虚拟环境自己的）-> 使用 venv_root
+                python_dlls = os.path.join(venv_root, 'DLLs')
                 if os.path.exists(python_dlls) and python_dlls not in pythonpath_dirs:
                     pythonpath_dirs.append(python_dlls)
                 # Python 根目录（虚拟环境自己的）
-                if os.path.exists(python_dir) and python_dir not in pythonpath_dirs:
-                    pythonpath_dirs.append(python_dir)
+                if os.path.exists(venv_root) and venv_root not in pythonpath_dirs:
+                    pythonpath_dirs.append(venv_root)
                 if pythonpath_dirs:
                     env['PYTHONPATH'] = os.pathsep.join(pythonpath_dirs)
                 # 4. 阻止访问系统
@@ -3832,6 +3843,9 @@ class PackageWorker(QThread):
                 if sys.platform == 'win32':
                     env['PYTHONLEGACYWINDOWSSTDIO'] = 'utf-8'
                 self.log_signal.emit(f"📁 使用虚拟环境隔离模式: {target_python}")
+                # 打印 PYTHONPATH 便于调试
+                if pythonpath_dirs:
+                    self.log_signal.emit(f"📁 PYTHONPATH: {env['PYTHONPATH']}")
             else:
                 # ===== 非虚拟环境：使用当前环境，只清理干扰项 =====
                 env = os.environ.copy()
@@ -3865,7 +3879,6 @@ class PackageWorker(QThread):
             for line in iter(process.stdout.readline, ""):
                 if not self._is_running:
                     process.terminate()
-                    import time
                     time.sleep(0.3)
                     if process.poll() is None:
                         process.kill()
@@ -3911,7 +3924,6 @@ class PackageWorker(QThread):
                 try:
                     if process.poll() is None:
                         process.terminate()
-                        import time
                         time.sleep(0.5)
                         if process.poll() is None:
                             process.kill()
@@ -4013,31 +4025,11 @@ class PackageWorker(QThread):
 
     def _run_hidden(self, args, **kwargs):
         """隐藏窗口运行命令（兼容所有调用）"""
-        if sys.platform == 'win32':
-            if 'startupinfo' not in kwargs:
-                si = subprocess.STARTUPINFO()
-                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                si.wShowWindow = subprocess.SW_HIDE
-                kwargs['startupinfo'] = si
-            if 'creationflags' not in kwargs:
-                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
-        return subprocess.run(args, **kwargs)
+        return _hidden_run(args, **kwargs)
 
     def _popen_hidden(self, args, **kwargs):
         """隐藏窗口运行命令（Popen）- 支持编码"""
-        if sys.platform == 'win32':
-            if 'startupinfo' not in kwargs:
-                si = subprocess.STARTUPINFO()
-                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                si.wShowWindow = subprocess.SW_HIDE
-                kwargs['startupinfo'] = si
-            if 'creationflags' not in kwargs:
-                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
-            if 'text' not in kwargs and 'encoding' not in kwargs:
-                kwargs['text'] = True
-                kwargs['encoding'] = 'utf-8'
-                kwargs['errors'] = 'replace'
-        return subprocess.Popen(args, **kwargs)
+        return _hidden_popen(args, default_text=True, **kwargs)
 
     def _get_exe_path(self):
         """获取 exe 路径"""
@@ -4061,20 +4053,8 @@ class PackageWorker(QThread):
             return None
 
     def _format_size(self, size):
-        """格式化大小显示"""
-        try:
-            if size <= 0:
-                return "0 B"
-            if size < 1024:
-                return f"{int(size)} B"
-            elif size < 1024 * 1024:
-                return f"{size / 1024:.2f} KB ({int(size)} B)"
-            elif size < 1024 * 1024 * 1024:
-                return f"{size / (1024 * 1024):.2f} MB ({int(size / 1024):,} KB)"
-            else:
-                return f"{size / (1024 * 1024 * 1024):.3f} GB ({int(size / (1024 * 1024)):,} MB)"
-        except Exception:
-            return "0 B"
+        """格式化大小显示（带细分信息）"""
+        return format_size(size, detail=True)
 
     def _build_command(self):
         cfg = self.config
@@ -4099,7 +4079,7 @@ class PackageWorker(QThread):
                 'Nuitka': 'nuitka',
                 'PyApp': 'pyapp',
                 'Py2exe': 'py2exe',
-                'Cx_Freeze': 'cx-freeze',
+                'Cx_Freeze': 'cx_freeze',
                 'Pynsist': 'pynsist',
                 'PyOxidizer': 'pyoxidizer',
                 'Py2app': 'py2app',
@@ -4122,12 +4102,19 @@ class PackageWorker(QThread):
         if packer == 'PyInstaller-spec' or script.lower().endswith('.spec'):
             spec_dir = os.path.dirname(script)
             build_dir = os.path.join(spec_dir, 'build')
-            if use_venv:
-                cmd = [target_python, '-S', '-m', 'PyInstaller',
+            # ===== 判断是否使用虚拟环境 =====
+            if use_venv and venv_python and os.path.exists(venv_python):
+                python_exe = venv_python
+                self.log_signal.emit(f"🐍 _build_command 使用虚拟环境Python: {python_exe}")
+                # 虚拟环境：不加 -S，保留 site-packages
+                cmd = [python_exe, '-m', 'PyInstaller',
                        '--distpath', spec_dir,
                        '--workpath', build_dir]
             else:
-                cmd = [target_python, '-m', 'PyInstaller',
+                python_exe = target_python
+                self.log_signal.emit(f"🐍 _build_command 使用目标Python: {python_exe}")
+                # 非虚拟环境：不加 -S（保持统一）
+                cmd = [python_exe, '-m', 'PyInstaller',
                        '--distpath', spec_dir,
                        '--workpath', build_dir]
             compress_level = cfg.get('compress_level', '默认')
@@ -4162,6 +4149,10 @@ class PackageWorker(QThread):
         # ========== Nuitka 模式 ==========
         if packer == 'Nuitka':
             cmd = [target_python, '-m', 'nuitka']
+            # Fixed: limit BLAS/OpenMP threads to avoid OOM in scipy/numpy imports during build
+            os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+            os.environ.setdefault('OMP_NUM_THREADS', '1')
+            os.environ.setdefault('MKL_NUM_THREADS', '1')
             version_file = cfg.get('version_file')
             version_info = cfg.get('version_info', {})
             if not version_info and version_file and os.path.exists(version_file):
@@ -4199,7 +4190,7 @@ class PackageWorker(QThread):
                     cmd.append(f"--copyright=Copyright (c) {datetime.datetime.now().year} {version_info['company']}")
                  #self.safe_log(f"📋 已应用版本信息: {version_info.get('product_name', '')} v{version_info.get('product_version', '')}")
             compat_mode = cfg.get('nuitka_compat', False)
-            backend = cfg.get('backend', 'auto')
+            #backend = cfg.get('backend', 'auto')
             mingw_path = cfg.get('mingw_path', '')
             msvc_path = cfg.get('msvc_path', '')
             has_mingw = cfg.get('has_mingw', False)
@@ -4239,7 +4230,7 @@ class PackageWorker(QThread):
                 if compat_mode:
                     cmd.append('--windows-console-mode=disable')
                 else:
-                    cmd.append('--disable-console')
+                    cmd.append('--windows-console-mode=disable')
             else:
                 if compat_mode:
                     cmd.append('--windows-console-mode=attach')
@@ -4260,10 +4251,9 @@ class PackageWorker(QThread):
             # ===== 并行编译 =====
             jobs = cfg.get('jobs', 'auto')
             if jobs == 'auto':
-                import multiprocessing
                 auto_jobs = max(1, multiprocessing.cpu_count())
+                auto_jobs = min(auto_jobs, 4)
                 cmd.append(f'--jobs={auto_jobs}')
-                self.safe_log(f"🔧 自动并行编译: {auto_jobs} 核")
             else:
                 cmd.append(f'--jobs={jobs}')
                 self.safe_log(f"🔧 并行编译: {jobs} 核")
@@ -4274,12 +4264,52 @@ class PackageWorker(QThread):
                     cmd.append('--mingw64')
                 elif has_msvc:
                     cmd.append('--msvc=latest')
+                elif backend == 'zig':
+                    if self._cached_has_zig and self._cached_zig_path:
+                        zig_path = get_short_path(self._cached_zig_path)
+                        zig_dir = os.path.dirname(zig_path)
+                        # 把 zig 目录加到 PATH 最前面
+                        old_path = os.environ.get('PATH', '')
+                        os.environ['PATH'] = zig_dir + os.pathsep + old_path
+                        if self._cached_zig_type == 'system':
+                            self.safe_log(f"🔧 使用系统 Zig: {zig_path}")
+                        else:
+                            self.safe_log(f"🔧 使用 pip Zig: {zig_path}")
+                    else:
+                        self.safe_log("🔧 使用 Zig (自动检测)")
+                    cmd.append('--zig')
+                elif backend == 'clang':
+                    cmd.append('--clang')
                 else:
                     cmd.append('--mingw64')
             elif backend == 'MinGW64':
                 cmd.append('--mingw64')
             elif backend == 'MSVC':
                 cmd.append('--msvc=latest')
+            elif backend == 'zig':
+                zig_type = getattr(self, '_cached_zig_type', '')
+                if zig_type == 'pip_module':
+                    # 通过 python -m ziglang 调用
+                    cmd.append('--zig')
+                    python_exe = self.python_path.currentText() or sys.executable
+                    # Nuitka 会自动查找 zig，但我们可以显式设置环境变量
+                    os.environ['ZIG_EXECUTABLE'] = python_exe + ' -m ziglang'
+                    self.safe_log(f"🔧 使用 pip 安装的 Zig (python -m ziglang)")
+                elif zig_type == 'pip':
+                    # 使用 python-zig 包装器
+                    cmd.append('--zig')
+                    os.environ['ZIG_EXECUTABLE'] = self._cached_zig_path
+                    self.safe_log(f"🔧 使用 pip 安装的 Zig (python-zig)")
+                elif self._cached_has_zig and self._cached_zig_path:
+                    cmd.append('--zig')
+                    os.environ['ZIG_EXECUTABLE'] = self._cached_zig_path
+                    self.safe_log(f"🔧 使用系统 Zig: {self._cached_zig_path}")
+                else:
+                    # 兜底：让 Nuitka 自动查找
+                    cmd.append('--zig')
+                    self.safe_log("🔧 使用 Zig (自动检测)")
+            elif backend == 'clang':
+                cmd.append('--clang')
             # ===== GUI插件 =====
             plugin = cfg.get('gui_plugin', 'auto')
             lto = cfg.get('lto', 'no')
@@ -4303,6 +4333,10 @@ class PackageWorker(QThread):
             has_tk = bool(imports_lower & {'tkinter', 'tk', 'tkinterdnd2'})
             has_wx = 'wx' in imports_lower
             plugin_args = set()
+            data_pkgs = set()
+            for pkg in ('docx', 'pandas', 'openpyxl', 'numpy'):
+                if pkg in imports_lower:
+                    data_pkgs.add(pkg)
             if has_sf:
                 if 'torch' in imports_lower:
                     plugin_args.add('--enable-plugin=torch')
@@ -4321,6 +4355,13 @@ class PackageWorker(QThread):
             if has_wx:
                 plugin_args.add('--enable-plugin=wx-python')
             cmd.extend(list(plugin_args))
+            for pkg in sorted(data_pkgs):
+                cmd.append('--include-package-data=' + pkg)
+            for pkg in ('matplotlib', 'PIL', 'scipy', 'bs4', 'lxml', 'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'torch', 'tensorflow', 'sklearn'):
+                if pkg.lower() not in imports_lower:
+                    cmd.append('--nofollow-import-to=' + pkg)
+                    if pkg == 'matplotlib':
+                        cmd.append('--disable-plugin=matplotlib')
             # ===== UPX压缩 =====
             upx_path = cfg.get('upx_path', '')
             compress_level = cfg.get('compress_level', '默认')
@@ -4334,7 +4375,6 @@ class PackageWorker(QThread):
                     del os.environ['UPX']
                 if sys.platform == 'win32':
                     try:
-                        import ctypes
                         GetShortPathName = ctypes.windll.kernel32.GetShortPathNameW
                         GetShortPathName.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
                         buffer = ctypes.create_unicode_buffer(260)
@@ -4406,6 +4446,11 @@ class PackageWorker(QThread):
             cmd.extend(['--hidden-import', mod])
         for mod in cfg.get('excludes', []):
             cmd.extend(['--exclude-module', mod])
+        # Fixed: auto-exclude heavy unused packages (torch crashes PyInstaller analysis with access violation)
+        _pyi_imports_lower = {m.lower() for m in cfg.get('hidden_imports', [])}
+        for _pkg in ('torch', 'torchvision', 'torchaudio', 'tensorflow', 'paddle', 'paddlepaddle', 'paddlex', 'paddleocr', 'onnxruntime', 'easyocr', 'cv2', 'matplotlib', 'PIL', 'scipy', 'bs4', 'lxml', 'sklearn', 'seaborn', 'statsmodels', 'numba', 'llvmlite', 'transformers', 'safetensors', 'huggingface_hub', 'modelscope', 'rembg', 'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'opencv-python', 'opencv-contrib-python'):
+            if _pkg.lower() not in _pyi_imports_lower:
+                cmd.extend(['--exclude-module', _pkg])
         # ===== 添加日志级别 =====
         log_level = cfg.get('log_level', 'INFO')
         if log_level and log_level != 'INFO':
@@ -4790,7 +4835,6 @@ class PackageWorker(QThread):
 
     def _install_temp_packer(self, venv_python, packer_name):
         """临时安装打包器"""
-        import subprocess
         clean_env = {'PATH': os.environ.get('PATH', '')}
         if sys.platform == 'win32':
             clean_env['SYSTEMROOT'] = os.environ.get('SYSTEMROOT', '')
@@ -4815,7 +4859,6 @@ class PackageWorker(QThread):
 
     def _uninstall_temp_packer(self, venv_python, packer_name):
         """卸载临时打包器"""
-        import subprocess
         if packer_name in ['pyinstaller', 'nuitka']:
             return
         clean_env = {'PATH': os.environ.get('PATH', '')}
@@ -4994,54 +5037,36 @@ class VersionInfoDialog(QDialog):
             return ",".join(str(int(p)) if p.isdigit() else "0" for p in (parts + ["0"] * 4)[:4])
         internal_name = re.sub(r'[^A-Za-z0-9_]', '_', info.get("product_name", "app"))
         original_filename = f"{internal_name}.exe"
-        content = f'''VSVersionInfo(
-ffi=FixedFileInfo(
-    filevers=({parse_vers("file_version")}),
-    prodvers=({parse_vers("product_version")}),
-    mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)
-),
-kids=[
-    StringFileInfo([
-    StringTable(u'040904B0', [
-        StringStruct(u'CompanyName', u'{info.get("company", "")}'),
-        StringStruct(u'FileDescription', u'{info.get("product_name", "")}'),
-        StringStruct(u'FileVersion', u'{info.get("file_version", "")}'),
-        StringStruct(u'InternalName', u'{internal_name}'),
-        StringStruct(u'LegalCopyright', u'Copyright (c) {datetime.datetime.now().year} {info.get("company", "PyPackTool")}'),
-        StringStruct(u'OriginalFilename', u'{original_filename}'),
-        StringStruct(u'ProductName', u'{info.get("product_name", "")}'),
-        StringStruct(u'ProductVersion', u'{info.get("product_version", "")}')
-    ])
-    ]),
-    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
-]
-)'''
+        content = textwrap.dedent(f'''\
+        VSVersionInfo(
+            ffi=FixedFileInfo(
+                filevers=({parse_vers("file_version")}),
+                prodvers=({parse_vers("product_version")}),
+                mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)
+            ),
+            kids=[
+                StringFileInfo([
+                    StringTable(u'040904B0', [
+                        StringStruct(u'CompanyName', u'{info.get("company", "")}'),
+                        StringStruct(u'FileDescription', u'{info.get("product_name", "")}'),
+                        StringStruct(u'FileVersion', u'{info.get("file_version", "")}'),
+                        StringStruct(u'InternalName', u'{internal_name}'),
+                        StringStruct(u'LegalCopyright', u'Copyright (c) {datetime.datetime.now().year} {info.get("company", "PyPackTool")}'),
+                        StringStruct(u'OriginalFilename', u'{original_filename}'),
+                        StringStruct(u'ProductName', u'{info.get("product_name", "")}'),
+                        StringStruct(u'ProductVersion', u'{info.get("product_version", "")}')
+                    ])
+                ]),
+                VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+            ]
+        )
+        ''')
         try:
             with open(path, 'w', encoding='utf-8-sig', newline='\n') as f:
                 f.write(content)
         except Exception as e:
             show_msg(self, "保存失败", f"无法保存版本文件:\n{e}",1)
         return path
-
-    def apply_to_pyinstaller(self, cmd):
-        """将版本信息应用到 PyInstaller 命令"""
-        path = self._save_to_file()
-        if path and os.path.exists(path):
-            cmd.append(f"--version-file={path}")
-            return path
-        return None
-
-    def apply_to_nuitka(self, cmd):
-        """将版本信息应用到 Nuitka 命令"""
-        info = self.get_result()
-        cmd.extend([
-            f"--product-name={info.get('product_name', '')}",
-            f"--product-version={info.get('product_version', '')}",
-            f"--file-version={info.get('file_version', '')}",
-            f"--company-name={info.get('company', '')}",
-            f"--file-description={info.get('description', '')}",
-            f"--copyright={info.get('copyright', '')}",
-        ])
 
 class IconMakerDialog(QDialog):
     SHAPES = {"圆角": 0.18, "方形": 0, "圆形": -1, "心形": -2}
@@ -5610,7 +5635,6 @@ class PyOxidizerWorker(QThread):
             output_name = self.config.get('output_name')
             env = self.config.get('env', os.environ.copy())
             # PyOxidizer 可能在构建过程中生成新的 Cargo.toml
-            import time
             time.sleep(1)  # 等待文件生成
             for root, dirs, files in os.walk(out_dir):
                 if 'Cargo.toml' in files:
@@ -5744,48 +5768,18 @@ class InstallDepsThread(QThread):
     def _get_installed_packages(self, python_exe):
         """获取指定Python环境的已安装包列表（彻底隔离环境）"""
         if not python_exe or not os.path.exists(python_exe):
-            return set()
+            return {}
         # ===== 如果开启虚拟，强制用 common_venv =====
         if hasattr(self, 'parent') and self.parent():
             if hasattr(self.parent(), 'use_venv') and self.parent().use_venv:
                 venv_python = self.parent()._get_venv_python()
                 if venv_python and os.path.exists(venv_python):
                     python_exe = venv_python
-        import subprocess
-        clean_env = {
-            'PATH': os.environ.get('PATH', ''),
-            'SYSTEMROOT': os.environ.get('SYSTEMROOT', ''),
-            'SystemRoot': os.environ.get('SystemRoot', ''),
-            'COMSPEC': os.environ.get('COMSPEC', ''),
-        }
-        for key in list(os.environ.keys()):
-            if key.upper().startswith('PYTHON') or key.upper() in ('VIRTUAL_ENV', 'CONDA_PREFIX'):
-                continue
-        clean_env['PYTHONNOUSERSITE'] = '1'
-        clean_env['PYTHONSAFEPATH'] = '1'
-        startupinfo = None
-        creationflags = 0
-        if sys.platform == 'win32':
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-            creationflags = subprocess.CREATE_NO_WINDOW
-        try:
-            result = subprocess.run(
-                [python_exe, '-m', 'pip', 'list', '--format=json'],
-                capture_output=True, text=True,
-                env=clean_env,
-                startupinfo=startupinfo,
-                creationflags=creationflags,
-                timeout=30
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                data = json.loads(result.stdout)
-                installed = {item['name'].lower() for item in data}
-                return installed
-        except Exception as e:
-            self.log_signal.emit(f"⚠️ 获取包列表失败: {e}")
-        return set()
+        data = run_pip_list(python_exe, on_error=lambda e: self.log_signal.emit(f"⚠️ 获取包列表失败: {e}"))
+        if data:
+            # 统一归一化：小写 + 下划线（A-B 和 a_b 视为同一个）
+            return {item['name'].lower().replace('-', '_'): item['name'] for item in data}
+        return {}
 
     def _analyze_imports(self, script_path):
         """分析脚本导入"""
@@ -5793,7 +5787,6 @@ class InstallDepsThread(QThread):
         try:
             with open(script_path, 'r', encoding='utf-8-sig', errors='replace') as f:
                 source = f.read()
-            import ast
             tree = ast.parse(source)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
@@ -5873,7 +5866,6 @@ class InstallDepsThread(QThread):
                 self.status_signal.emit(f"安装 {pkg} ({i+1}/{len(missing_packages)})")
                 self.log_signal.emit(f"📥 安装 {pkg} ({i+1}/{len(missing_packages)})...")
                 try:
-                    import subprocess
                     env = os.environ.copy()
                     env.pop('PYTHONPATH', None)
                     env.pop('PYTHONHOME', None)
@@ -5890,6 +5882,14 @@ class InstallDepsThread(QThread):
                     if success:
                         self.log_signal.emit(f"   ✅ {pkg} 安装成功")
                         success_count += 1
+                        if install_pkg.lower() == 'pywin32' and sys.platform == 'win32':
+                            try:
+                                subprocess.run(
+                                    [self.venv_python, '-c', 'import pywin32_postinstall; pywin32_postinstall.install()'],
+                                    capture_output=True, text=True, timeout=30
+                                )
+                            except:
+                                pass
                     else:
                         # ===== 尝试包名映射 =====
                         mapped_pkg = MODULE_TO_PACKAGE.get(pkg, pkg)
@@ -5943,33 +5943,19 @@ class PackageMainWindow(QMainWindow):
         'def decorator', 'def wrapper',
         'async def main(', 'async def run(',
     ]
+    progress_update_signal = pyqtSignal(int)
+    closure_finished_signal = pyqtSignal()
     venv_log_signal = pyqtSignal(str)
     venv_progress_signal = pyqtSignal(int, str)
     venv_finish_signal = pyqtSignal(bool)
     packer_ver_signal = pyqtSignal(str, str)  # packer_display, version
     def _run_hidden(self, args, **kwargs):
         """隐藏窗口运行命令（兼容所有调用）"""
-        if sys.platform == 'win32':
-            if 'startupinfo' not in kwargs:
-                si = subprocess.STARTUPINFO()
-                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                si.wShowWindow = subprocess.SW_HIDE
-                kwargs['startupinfo'] = si
-            if 'creationflags' not in kwargs:
-                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
-        return subprocess.run(args, **kwargs)
+        return _hidden_run(args, **kwargs)
 
     def _popen_hidden(self, args, **kwargs):
         """隐藏窗口运行命令（Popen）"""
-        if sys.platform == 'win32':
-            if 'startupinfo' not in kwargs:
-                si = subprocess.STARTUPINFO()
-                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                si.wShowWindow = subprocess.SW_HIDE
-                kwargs['startupinfo'] = si
-            if 'creationflags' not in kwargs:
-                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
-        return subprocess.Popen(args, **kwargs)
+        return _hidden_popen(args, **kwargs)
 
     def _get_python_env_id(self, python_exe):
         """生成当前Python环境的唯一标识返回: 'system', 'venv', 'common_venv', 或路径hash"""
@@ -6020,8 +6006,8 @@ class PackageMainWindow(QMainWindow):
         cache_file = os.path.join(project_output, ".pypack_cache.json")
         return cache_file
 
-    def _load_project_cache(self):
-        """加载当前环境的项目缓存（比较包列表快照，一致则恢复，不一致则重新分析）返回: dict 或 None"""
+    def _load_project_cache(self, fast_mode=False):
+        """加载项目缓存 - fast_mode=True 时跳过包列表验证，避免启动阻塞"""
         cache_path = self._get_project_cache_path()
         if not cache_path or not os.path.exists(cache_path):
             return None
@@ -6032,14 +6018,14 @@ class PackageMainWindow(QMainWindow):
             env_id = self._get_python_env_id(python_exe)
             env_cache = cache.get('environments', {}).get(env_id)
             if env_cache is None:
-                #self.safe_log(f"ℹ️ 缓存中无环境 [{env_id}]")
                 return None
-            # 获取当前环境的已安装包列表
+            # 快速模式：启动时直接信任缓存，不阻塞 UI
+            if fast_mode:
+                return env_cache
+            # 正常模式：后台验证包列表（此时 _get_installed_packages 已有缓存，极快）
             installed_map = self._get_installed_packages(python_exe)
             installed_set = set(installed_map.keys())
-            # 获取缓存中的包列表快照
             cached_packages = set(env_cache.get('installed_packages', []))
-            # 比较包列表是否一致
             if installed_set != cached_packages:
                 diff_added = installed_set - cached_packages
                 diff_removed = cached_packages - installed_set
@@ -6047,12 +6033,9 @@ class PackageMainWindow(QMainWindow):
                     self.safe_log(f"📦 新增包: {', '.join(list(diff_added)[:5])}{'...' if len(diff_added) > 5 else ''}")
                 if diff_removed:
                     self.safe_log(f"📦 移除包: {', '.join(list(diff_removed)[:5])}{'...' if len(diff_removed) > 5 else ''}")
-                #self.safe_log(f"🔄 环境包列表变化，缓存失效 [{env_id}]")
                 return None
-            #self.safe_log(f"📦 加载缓存 [{env_id}] (包列表一致: {len(installed_set)} 个包)")
             return env_cache
         except Exception as e:
-            #self.safe_log(f"⚠️ 加载项目缓存失败: {e}")
             return None
 
     def _save_project_cache(self, analyze_result=None):
@@ -6074,18 +6057,27 @@ class PackageMainWindow(QMainWindow):
             python_exe = self.python_path.currentText() or sys.executable
             env_id = self._get_python_env_id(python_exe)
             script = self.input_file.text()
-            # 获取当前环境的已安装包列表（快照）
             installed_map = self._get_installed_packages(python_exe)
             installed_snapshot = list(installed_map.keys())
+            # 保存时恢复基础状态：不持久化闭包带来的变化
+            closure_deps = set(getattr(self, '_closure_only_deps', set()))
+            # 隐藏列表：
+            hidden_imports_to_save = [m for m in self.hidden_imports_list if m.lower().replace('-', '_') not in closure_deps]
+            # 排除列表：
+            exclude_to_save = self.exclude_list.copy()
+            if closure_deps:
+                for pkg_lower, pkg_original in installed_map.items():
+                    if pkg_lower in closure_deps and pkg_original not in exclude_to_save:
+                        exclude_to_save.append(pkg_original)
             env_cache = {
                 'timestamp': time.time(),
-                'hidden_imports': self.hidden_imports_list.copy(),
-                'exclude_list': self.exclude_list.copy(),
+                'hidden_imports': sorted(hidden_imports_to_save),
+                'exclude_list': sorted(exclude_to_save),
                 'manual_exclude_list': getattr(self, 'manual_exclude_list', []).copy(),
                 'data_files': self.data_files_list.copy(),
                 'python_path': python_exe,
                 'python_version': self.python_version.text() or '',
-                'installed_packages': installed_snapshot,  # 包列表快照
+                'installed_packages': installed_snapshot,
             }
             if analyze_result:
                 result, real_imports, extra_deps, uses_tkinter = analyze_result
@@ -6100,32 +6092,6 @@ class PackageMainWindow(QMainWindow):
             os.replace(temp_path, cache_path)
             self.safe_log(f"💾 保存缓存 [{env_id}] (包列表快照: {len(installed_snapshot)} 个包)")
         except Exception as e:
-            pass
-            #self.safe_log(f"⚠️ 保存项目缓存失败: {e}")
-
-    def _init_from_cache(self):
-        """同步读取缓存，用于UI初始化"""
-        self._cached_upx = ""
-        self._cached_python = ""
-        self._cached_python_ver = ""
-        self._cached_backend = "auto"
-        try:
-            if os.path.exists(self.global_cache_file):
-                with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
-                    cache = json.load(f)
-                upx = cache.get('upx', {})
-                if upx.get('path') and os.path.exists(upx['path']):
-                    self._cached_upx = upx['path']
-                    upx_path = upx['path']
-                    import re
-                    upx_path = re.sub(r'\.exe$', '.exe', upx_path, flags=re.IGNORECASE)
-                    self.upx_path.setText(upx_path)
-                py = cache.get('python', {})
-                if py.get('path') and os.path.exists(py['path']):
-                    self._cached_python = py['path']
-                    self._cached_python_ver = py.get('version', '')
-                self._cached_backend = cache.get('compiler_backend', 'auto')
-        except:
             pass
 
     def _open_inject_selector(self):
@@ -6268,18 +6234,6 @@ class PackageMainWindow(QMainWindow):
     def _apply_fix(self, file_path):
         """应用修复（已由预览对话框确认）"""
 
-    def _update_cache_upx(self, upx_path):
-        try:
-            cache = {}
-            if os.path.exists(self.global_cache_file):
-                with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
-                    cache = json.load(f)
-            cache['upx'] = {'path': upx_path, 'time': time.time()}
-            with open(self.global_cache_file, 'w', encoding='utf-8-sig') as f:
-                json.dump(cache, f, ensure_ascii=False, indent=2)
-        except:
-            pass
-
     def _update_cache_python(self, py_path):
         try:
             cache = {}
@@ -6294,18 +6248,6 @@ class PackageMainWindow(QMainWindow):
             except:
                 pass
             cache['python'] = {'path': py_path, 'version': version, 'time': time.time()}
-            with open(self.global_cache_file, 'w', encoding='utf-8-sig') as f:
-                json.dump(cache, f, ensure_ascii=False, indent=2)
-        except:
-            pass
-
-    def _update_cache_backend(self, backend):
-        try:
-            cache = {}
-            if os.path.exists(self.global_cache_file):
-                with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
-                    cache = json.load(f)
-            cache['compiler_backend'] = backend
             with open(self.global_cache_file, 'w', encoding='utf-8-sig') as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
         except:
@@ -6339,8 +6281,11 @@ class PackageMainWindow(QMainWindow):
 
     def _load_all_cached_data(self):
         """从缓存加载数据（强制排序）"""
+        QApplication.processEvents()
         self._load_config()
         if not os.path.exists(self.global_cache_file):
+            # ===== 缓存不存在：后台重新检测编译器/工具链，避免永远显示“未安装” =====
+            QTimer.singleShot(100, self._detect_all_backends_async)
             return
         try:
             with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
@@ -6349,7 +6294,6 @@ class PackageMainWindow(QMainWindow):
             python_list = cache.get('python_list', [])
             QTimer.singleShot(100, self._filter_python_list)
             if python_list:
-                # ===== 强制排序：项目venv → 系统 → common_venv =====
                 project_venv = []
                 system_py = []
                 common_venv = []
@@ -6384,8 +6328,16 @@ class PackageMainWindow(QMainWindow):
                 self._packer_versions_cache = packer_versions
                 self._packer_versions_detected = True
                 self._packer_cache_loaded = True
-            # ===== 3. 加载编译器（只加载到内存） =====
+            # ===== 3. 加载编译器（包含 Zig 和 Clang） =====
             compiler = cache.get('compiler', {})
+            # ===== 编译后端缓存优先：缓存里缺失的后端才后台补测（有记录则直接用，不再重测） =====
+            missing_backends = [k for k in ('msvc', 'mingw', 'clang', 'zig') if k not in compiler]
+            if 'rust_compiler' not in cache:
+                missing_backends.append('rust')
+            if 'nsis' not in cache:
+                missing_backends.append('nsis')
+            if missing_backends:
+                QTimer.singleShot(100, self._detect_all_backends_async)
             if compiler:
                 self._cached_has_msvc = compiler.get('msvc', False)
                 self._cached_has_mingw = compiler.get('mingw', False)
@@ -6393,7 +6345,39 @@ class PackageMainWindow(QMainWindow):
                 self._cached_mingw_path = compiler.get('mingw_path', '')
                 self._cached_msvc_version = compiler.get('msvc_version', '')
                 self._cached_mingw_version = compiler.get('mingw_version', '')
-            # ===== 4. 加载Rust =====
+                self._cached_has_zig = compiler.get('zig', False)
+                self._cached_has_clang = compiler.get('clang', False)
+                self._cached_zig_path = compiler.get('zig_path', '')
+                self._cached_clang_path = compiler.get('clang_path', '')
+                self._cached_zig_version = compiler.get('zig_version', '')
+                self._cached_clang_version = compiler.get('clang_version', '')
+            # ===== 4. 加载 Zig 缓存（按 _get_python_env_id 区分各Python环境） =====
+            zig_system = cache.get('zig_system', {})
+            self._cached_zig_system = zig_system.get('has_zig', False)
+            self._cached_zig_system_path = zig_system.get('path', '')
+            self._cached_zig_system_version = zig_system.get('version', '')
+            self._cached_zig_venvs = cache.get('zig_venvs', {})
+            env_id = self._get_python_env_id(self.python_path.currentText() or sys.executable)
+            # 先查当前 Python 环境（由 _get_python_env_id 标识）是否有 pip zig
+            env_zig = self._cached_zig_venvs.get(env_id, {})
+            vpath = env_zig.get('path', '')
+            if env_zig.get('has_zig', False) and ('site-packages' in vpath or 'ziglang' in vpath):
+                self._cached_has_zig = True
+                self._cached_zig_path = vpath
+                self._cached_zig_type = env_zig.get('type', 'pip_module')
+                self._cached_zig_version = env_zig.get('version', '')
+            # 当前环境没有 pip zig，再 fallback 系统/预制的 zig
+            elif self._cached_zig_system and self._cached_zig_system_path:
+                self._cached_has_zig = True
+                self._cached_zig_path = self._cached_zig_system_path
+                self._cached_zig_type = 'system'
+                self._cached_zig_version = self._cached_zig_system_version
+            else:
+                self._cached_has_zig = False
+                self._cached_zig_path = ''
+                self._cached_zig_type = ''
+                self._cached_zig_version = ''
+            # ===== 5. 加载Rust =====
             rust = cache.get('rust_compiler', {})
             if rust:
                 self._cached_has_cargo = rust.get('has_cargo', False)
@@ -6401,20 +6385,20 @@ class PackageMainWindow(QMainWindow):
                 self._cached_cargo_path = rust.get('cargo_path', '')
                 self._cached_rustc_path = rust.get('rustc_path', '')
                 self._cached_rust_version = rust.get('rust_version', '')
-            # ===== 5. 加载NSIS =====
+            # ===== 6. 加载NSIS =====
             nsis = cache.get('nsis', {})
             if nsis:
                 self._cached_has_nsis = nsis.get('has_nsis', False)
                 self._cached_nsis_path = nsis.get('nsis_path', '')
                 self._cached_nsis_version = nsis.get('nsis_version', '')
-            # ===== 6. 加载主题 =====
+            # ===== 7. 加载主题 =====
             theme_idx = cache.get('theme_index', 0)
             if 0 <= theme_idx < len(self.themes):
                 self.current_theme_idx = theme_idx
                 self._apply_theme()
                 if hasattr(self, 'theme_btn'):
                     self.theme_btn.setText(self.themes[theme_idx])
-            # ===== 7. 加载UPX =====
+            # ===== 8. 加载UPX =====
             upx = cache.get('upx', {})
             if upx.get('path') and os.path.exists(upx['path']):
                 self.upx_path.setText(upx['path'])
@@ -6422,89 +6406,53 @@ class PackageMainWindow(QMainWindow):
                 self.upx_path.setText(formatted_path)
                 self._set_upx_environment(upx_path)
             else:
-                # ===== 缓存中没有UPX，异步查找 =====
                 threading.Thread(target=self._async_find_upx, daemon=True).start()
-            # ===== 8. 后端选择 =====
-            backend = cache.get('compiler_backend', 'auto')
+            # ===== 9. 后端选择 =====
+            backend = cache.get('compiler_backend', 'MinGW64')
             if hasattr(self, 'nuitka_backend_combo') and self.nuitka_backend_combo is not None:
+                if backend == "zig" and not self._cached_has_zig:
+                    backend = "MinGW64"
+                    cache['compiler_backend'] = "MinGW64"
+                    try:
+                        with open(self.global_cache_file, 'w', encoding='utf-8-sig') as f:
+                            json.dump(cache, f, ensure_ascii=False, indent=2)
+                    except:
+                        pass
                 idx = self.nuitka_backend_combo.findText(backend)
                 if idx >= 0:
                     self.nuitka_backend_combo.setCurrentIndex(idx)
-            # ===== 9.加载清理阈值 =====
+                else:
+                    idx = self.nuitka_backend_combo.findText('MinGW64')
+                    if idx >= 0:
+                        self.nuitka_backend_combo.setCurrentIndex(idx)
+            # ===== 10. 加载清理阈值 =====
             threshold = cache.get('clean_threshold', 100)
             if hasattr(self, 'clean_threshold_spin'):
                 self.clean_threshold_spin.setValue(threshold)
-        except Exception as e:
-            pass
-
-    def _load_cache_fast(self):
-        """快速加载缓存 - 只加载显示需要的数据"""
-        try:
-            if not os.path.exists(self.global_cache_file):
-                return
-            with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
-                cache = json.load(f)
-            # ===== 1. 加载Python列表（快速） =====
-            python_list = cache.get('python_list', [])
-            if python_list:
-                self.python_path.clear()
-                for p in python_list:
-                    if os.path.exists(p):
-                        self.python_path.addItem(p)
-                py = cache.get('python', {})
-                cached_path = py.get('path')
-                if cached_path and os.path.exists(cached_path):
-                    idx = self.python_path.findText(cached_path)
-                    if idx >= 0:
-                        self.python_path.setCurrentIndex(idx)
-                        ver = py.get('version', '')
+            # ===== 11. 恢复虚拟环境状态 =====
+            if cache.get('venv_enabled', False):
+                venv_python = cache.get('venv_python')
+                if venv_python and os.path.exists(venv_python):
+                    self.venv_mode.blockSignals(True)
+                    self.venv_mode.setChecked(True)
+                    self.use_venv = True
+                    self.venv_mode.blockSignals(False)
+                    display_path = self._format_path(venv_python)
+                    if self.python_path.findText(display_path) < 0:
+                        self.python_path.addItem(display_path)
+                    self.python_path.setCurrentText(display_path)
+                    try:
+                        result = self._run_hidden([venv_python, '--version'], capture_output=True, text=True, timeout=2)
+                        ver = result.stdout.strip() or result.stderr.strip()
                         if ver:
                             self.python_version.setText(ver)
-                            python_types = cache.get('python_types', {})
-                            ptype = python_types.get(cached_path, "Python")
-                            self.status_python.setText(f"🐍 {ptype}: {ver}")
-            # ===== 2. 加载打包器版本（只显示当前） =====
-            packer_versions = cache.get('packer_versions', {})
-            if packer_versions:
-                self._packer_versions_cache = packer_versions
-                self._packer_versions_detected = True
-                self._packer_cache_loaded = True
-                current = self.packer_combo.currentText()
-                display = self._get_packer_display_name(current)
-                python_exe = self.python_path.currentText()
-                if python_exe:
-                    cache_key = f"{display}@{python_exe}"
-                    version = packer_versions.get(cache_key)
-                    if version:
-                        self._update_packer_status(display, version)
-            # ===== 3. 加载编译器状态（只保存数据，不更新UI） =====
-            compiler = cache.get('compiler', {})
-            if compiler:
-                self._cached_has_msvc = compiler.get('msvc', False)
-                self._cached_has_mingw = compiler.get('mingw', False)
-                self._cached_msvc_path = compiler.get('msvc_path', '')
-                self._cached_mingw_path = compiler.get('mingw_path', '')
-                self._cached_msvc_version = compiler.get('msvc_version', '')
-                self._cached_mingw_version = compiler.get('mingw_version', '')
-            # ===== 4. 加载主题 =====
-            theme_idx = cache.get('theme_index', 0)
-            if 0 <= theme_idx < len(self.themes):
-                self.current_theme_idx = theme_idx
-                self._apply_theme()
-                if hasattr(self, 'theme_btn'):
-                    self.theme_btn.setText(self.themes[theme_idx])
-            # ===== 5. 加载UPX =====
-            upx = cache.get('upx', {})
-            if upx.get('path') and os.path.exists(upx['path']):
-                self.upx_path.setText(upx['path'])
-            # ===== 6. 后端选择（只保存，不更新UI） =====
-            backend = cache.get('compiler_backend', 'auto')
-            if hasattr(self, 'nuitka_backend_combo') and self.nuitka_backend_combo is not None:
-                idx = self.nuitka_backend_combo.findText(backend)
-                if idx >= 0:
-                    self.nuitka_backend_combo.setCurrentIndex(idx)
-            # ===== 延迟加载剩余功能 =====
-            QTimer.singleShot(300, self._load_remaining_cache)
+                            self.status_python.setText(f"🐍 {ver} (venv)")
+                    except:
+                        pass
+                    self.safe_log(f"✅ 已恢复虚拟环境: {venv_python}")
+            # ===== 12. 打印 Zig 缓存日志 =====
+            if self._cached_has_zig and self._cached_zig_version:
+                self.safe_log(f"✅ Zig 缓存加载: {self._cached_zig_version}")
         except Exception as e:
             pass
 
@@ -6536,120 +6484,8 @@ class PackageMainWindow(QMainWindow):
         except Exception as e:
             pass
 
-    def _apply_cached_paths(self):
-        """启动时从缓存加载所有配置"""
-        try:
-            cache = load_cache()
-            self._load_all_backend_cache(cache)
-            # Python路径加载
-            python_list = cache.get('python_list', [])
-            python_types = cache.get('python_types', {})
-            py = cache.get('python', {})
-            if python_list:
-                self.python_path.clear()
-                for p in python_list:
-                    if os.path.exists(p):
-                        self.python_path.addItem(p)
-                cached_path = py.get('path')
-                if cached_path and os.path.exists(cached_path):
-                    idx = self.python_path.findText(cached_path)
-                    if idx >= 0:
-                        self.python_path.setCurrentIndex(idx)
-                        self.python_version.setText(py.get('version', ''))
-                        ptype = python_types.get(cached_path, "Python")
-                        ver = py.get('version', '')
-                        if ver:
-                            self.status_python.setText(f"🐍 {ptype}: {ver}")
-                        else:
-                            self.status_python.setText(f"🐍 {ptype}: {cached_path}")
-                        QTimer.singleShot(100, self._on_python_selected)
-                    elif self.python_path.count() > 0:
-                        self.python_path.setCurrentIndex(0)
-                        py_path = self.python_path.currentText()
-                        if py_path and os.path.exists(py_path):
-                            try:
-                                result = self._run_hidden([py_path, '--version'], capture_output=True, text=True, timeout=2)
-                                ver = result.stdout.strip() or result.stderr.strip()
-                                if ver:
-                                    self.python_version.setText(ver)
-                                    ptype = python_types.get(py_path, "Python")
-                                    self.status_python.setText(f"🐍 {ptype}: {ver}")
-                            except:
-                                pass
-                elif py.get('path') and os.path.exists(py['path']):
-                    idx = self.python_path.findText(py['path'])
-                    if idx < 0:
-                        self.python_path.addItem(py['path'])
-                        idx = self.python_path.findText(py['path'])
-                    if idx >= 0:
-                        self.python_path.setCurrentIndex(idx)
-                        self.python_version.setText(py.get('version', ''))
-                        self.status_python.setText(f"🐍 Python: {py.get('version', '')}")
-                        QTimer.singleShot(100, self._on_python_selected)
-            # ===== UPX =====
-            upx = cache.get('upx', {})
-            if upx.get('path') and os.path.exists(upx['path']):
-                self.upx_path.setText(upx['path'])
-                formatted_path = self._format_path(upx_path)
-                self.upx_path.setText(formatted_path)
-                self._set_upx_environment(upx_path)
-            else:
-                # ===== 缓存中没有UPX，异步查找 =====
-                threading.Thread(target=self._async_find_upx, daemon=True).start()
-            backend = cache.get('compiler_backend', 'auto')
-            if hasattr(self, 'nuitka_backend_combo') and self.nuitka_backend_combo is not None:
-                idx = self.nuitka_backend_combo.findText(backend)
-                if idx >= 0:
-                    self.nuitka_backend_combo.setCurrentIndex(idx)
-            # 打包器版本
-            self._packer_versions_cache = cache.get('packer_versions', {})
-            if self._packer_versions_cache:
-                self._packer_versions_detected = True
-            # 主题
-            theme_idx = cache.get('theme_index', 0)
-            if 0 <= theme_idx < len(self.themes):
-                self.current_theme_idx = theme_idx
-                self._apply_theme()
-                if hasattr(self, 'theme_btn'):
-                    self.theme_btn.setText(self.themes[theme_idx])
-            QTimer.singleShot(100, self._update_all_backend_ui)
-            python_exe = self.python_path.currentText()
-            if python_exe and os.path.exists(python_exe):
-                has_cache = False
-                for key in self._packer_versions_cache.keys():
-                    if key.endswith(python_exe):
-                        has_cache = True
-                        break
-                if not has_cache and not self._packer_versions_detected:
-                    QTimer.singleShot(500, self._detect_all_packer_versions_async)
-                    # ===== 只检测编译器 =====
-                    QTimer.singleShot(100, self._detect_compilers_async)
-            # ===== 新增：恢复虚拟环境状态 =====
-            if cache.get('venv_enabled', False):
-                venv_python = cache.get('venv_python')
-                if venv_python and os.path.exists(venv_python):
-                    self.venv_mode.blockSignals(True)
-                    self.venv_mode.setChecked(True)
-                    self.use_venv = True
-                    self.venv_mode.blockSignals(False)
-                    display_path = self._format_path(venv_python)
-                    if self.python_path.findText(display_path) < 0:
-                        self.python_path.addItem(display_path)
-                    self.python_path.setCurrentText(display_path)
-                    try:
-                        result = self._run_hidden([venv_python, '--version'], capture_output=True, text=True, timeout=2)
-                        ver = result.stdout.strip() or result.stderr.strip()
-                        if ver:
-                            self.python_version.setText(ver)
-                            self.status_python.setText(f"🐍 {ver} (venv)")
-                    except:
-                        pass
-                    self.safe_log(f"✅ 已恢复虚拟环境: {venv_python}")
-        except Exception as e:
-            self.safe_log(f"⚠️ 加载缓存失败: {e}")
-
     def save_cache(self):
-        """保存完整缓存到文件（从 python_list 重建 python_types，并排序）"""
+        """保存完整缓存到文件"""
         old_cache = {}
         if os.path.exists(self.global_cache_file):
             try:
@@ -6658,16 +6494,15 @@ class PackageMainWindow(QMainWindow):
             except:
                 pass
         cache = {}
-        # 1. 保留 upx 字段
+        # 1. 保留 upx
         if old_cache.get('upx'):
             cache['upx'] = old_cache['upx']
-        # 2. 合并 python_list 并排序
+        # 2. python_list
         merged_list = old_cache.get('python_list', [])
         current_list = [self.python_path.itemText(i) for i in range(self.python_path.count())] if self.python_path else []
         for p in current_list:
             if p not in merged_list:
                 merged_list.append(p)
-        # ===== 强制排序：项目venv → 系统 → common_venv =====
         project_venv = []
         system_py = []
         common_venv = []
@@ -6681,7 +6516,7 @@ class PackageMainWindow(QMainWindow):
                 system_py.append(path)
         merged_list = project_venv + system_py + common_venv
         cache['python_list'] = merged_list
-        # 3. 从 merged_list 重建 python_types
+        # 3. python_types
         merged_types = {}
         for path in merged_list:
             path_lower = path.lower()
@@ -6692,7 +6527,7 @@ class PackageMainWindow(QMainWindow):
             else:
                 merged_types[path] = 'system'
         cache['python_types'] = merged_types
-        # 4. 更新当前选中的 Python
+        # 4. 当前 Python
         if self.python_path and self.python_path.count() > 0:
             current_path = self.python_path.currentText()
             if current_path:
@@ -6701,22 +6536,73 @@ class PackageMainWindow(QMainWindow):
                     'version': self.python_version.text() if self.python_version else '',
                     'time': time.time()
                 }
-        # 5. 保留 compiler 字段
-        if old_cache.get('compiler'):
-            cache['compiler'] = old_cache['compiler']
-        elif self._cached_has_msvc or self._cached_has_mingw:
+        # 5. compiler
+        if getattr(self, '_backends_detected', False):
+            # ===== 已执行过后端检测：无论结果如何都持久化，避免“未安装”状态丢失/旧结果不更新 =====
+            compiler = (old_cache.get('compiler') or {}).copy()
+            compiler.update({
+                'msvc': self._cached_has_msvc,
+                'mingw': self._cached_has_mingw,
+                'zig': self._cached_has_zig,
+                'clang': self._cached_has_clang,
+                'msvc_path': self._cached_msvc_path,
+                'mingw_path': self._cached_mingw_path,
+                'zig_path': self._cached_zig_path,
+                'clang_path': self._cached_clang_path,
+                'msvc_version': self._cached_msvc_version,
+                'mingw_version': self._cached_mingw_version,
+                'zig_version': self._cached_zig_version,
+                'clang_version': self._cached_clang_version,
+            })
+            cache['compiler'] = compiler
+        elif self._cached_has_msvc or self._cached_has_mingw or self._cached_has_zig or self._cached_has_clang:
             cache['compiler'] = {
                 'msvc': self._cached_has_msvc,
                 'mingw': self._cached_has_mingw,
+                'zig': self._cached_has_zig,
+                'clang': self._cached_has_clang,
                 'msvc_path': self._cached_msvc_path,
                 'mingw_path': self._cached_mingw_path,
+                'zig_path': self._cached_zig_path,
+                'clang_path': self._cached_clang_path,
                 'msvc_version': self._cached_msvc_version,
                 'mingw_version': self._cached_mingw_version,
+                'zig_version': self._cached_zig_version,
+                'clang_version': self._cached_clang_version,
             }
-        # 6. 保留 rust_compiler 字段
-        if old_cache.get('rust_compiler'):
-            cache['rust_compiler'] = old_cache['rust_compiler']
-        elif self._cached_has_cargo or self._cached_has_rustc:
+        # 6. Zig 缓存（严格分流：系统/预制 存 zig_system，pip安装 按Python环境存 zig_venvs）
+        zig_path = getattr(self, '_cached_zig_path', '')
+        env_id = self._get_python_env_id(self.python_path.currentText())
+        # pip 安装的 zig 路径一定包含 site-packages 或 ziglang
+        is_pip_zig = zig_path and ('site-packages' in zig_path or 'ziglang' in zig_path)
+        if getattr(self, '_backends_detected', False):
+            # ===== 检测已执行：按内存状态完整写入（系统 zig + 多环境 zig_venvs 合并） =====
+            merged_zig_venvs = dict(old_cache.get('zig_venvs', {}))
+            for k, v in getattr(self, '_cached_zig_venvs', {}).items():
+                if isinstance(v, dict) and v.get('has_zig'):
+                    merged_zig_venvs[k] = v
+            if is_pip_zig:
+                merged_zig_venvs[env_id] = {
+                    'has_zig': True,
+                    'path': zig_path,
+                    'version': getattr(self, '_cached_zig_version', ''),
+                    'type': getattr(self, '_cached_zig_type', '') or 'pip_module',
+                }
+            cache['zig_venvs'] = merged_zig_venvs
+            cache['zig_system'] = {
+                'has_zig': getattr(self, '_cached_zig_system', False),
+                'path': getattr(self, '_cached_zig_system_path', ''),
+                'version': getattr(self, '_cached_zig_system_version', ''),
+            }
+        elif zig_path:
+            # 未跑检测但内存有 zig 路径：保留旧行为
+            cache['zig_system'] = old_cache.get('zig_system', {})
+            cache['zig_venvs'] = old_cache.get('zig_venvs', {})
+        else:
+            cache['zig_system'] = old_cache.get('zig_system', {})
+            cache['zig_venvs'] = old_cache.get('zig_venvs', {})
+        # 7. rust_compiler
+        if getattr(self, '_backends_detected', False):
             cache['rust_compiler'] = {
                 'has_cargo': self._cached_has_cargo,
                 'has_rustc': self._cached_has_rustc,
@@ -6724,68 +6610,101 @@ class PackageMainWindow(QMainWindow):
                 'rustc_path': self._cached_rustc_path,
                 'rust_version': self._cached_rust_version,
             }
-        # 7. 保留 nsis 字段
-        if old_cache.get('nsis'):
-            cache['nsis'] = old_cache['nsis']
-        elif self._cached_has_nsis:
+        elif old_cache.get('rust_compiler'):
+            cache['rust_compiler'] = old_cache['rust_compiler']
+        # 8. nsis
+        if getattr(self, '_backends_detected', False):
             cache['nsis'] = {
                 'has_nsis': self._cached_has_nsis,
                 'nsis_path': self._cached_nsis_path,
                 'nsis_version': self._cached_nsis_version,
             }
-        # 8. 保留 packer_versions
+        elif old_cache.get('nsis'):
+            cache['nsis'] = old_cache['nsis']
+        # 9. packer_versions
         if old_cache.get('packer_versions'):
             cache['packer_versions'] = old_cache['packer_versions']
         elif self._packer_versions_cache:
             cache['packer_versions'] = self._packer_versions_cache
-        # 9. compiler_backend
+        # 10. compiler_backend
         if hasattr(self, 'nuitka_backend_combo') and self.nuitka_backend_combo:
             cache['compiler_backend'] = self.nuitka_backend_combo.currentText()
         elif old_cache.get('compiler_backend'):
             cache['compiler_backend'] = old_cache['compiler_backend']
         else:
             cache['compiler_backend'] = 'auto'
-        # 10. theme_index
+        # 11. theme_index
         cache['theme_index'] = self.current_theme_idx
-        # ===== 写入文件 =====
+        # 写入文件
         if cache:
             try:
-                temp_file = self.global_cache_file + '.tmp'
-                with open(temp_file, 'w', encoding='utf-8-sig') as f:
-                    json.dump(cache, f, ensure_ascii=False, indent=2)
-                os.replace(temp_file, self.global_cache_file)
+                with self._cache_io_lock:
+                    temp_file = self.global_cache_file + '.tmp'
+                    with open(temp_file, 'w', encoding='utf-8-sig') as f:
+                        json.dump(cache, f, ensure_ascii=False, indent=2)
+                    os.replace(temp_file, self.global_cache_file)
             except Exception as e:
                 pass
 
     def _display_compiler_status(self):
-        """显示编译器状态（从缓存）- 只用于Nuitka"""
+        """显示编译器状态，只有 zig 分支才会调用 _load_zig_from_cache"""
         if not hasattr(self, 'nuitka_backend_combo') or self.nuitka_backend_combo is None:
             return
         backend = self.nuitka_backend_combo.currentText()
+        if backend == "zig":
+            self._load_zig_from_cache()
+            if self._cached_has_zig and self._cached_zig_version and self._cached_zig_version != "detected":
+                self.status_compiler.setText(f"🔧 Zig: {self._cached_zig_version}")
+                self.status_compiler.setStyleSheet("color: green;")
+            elif self._cached_has_zig:
+                self.status_compiler.setText("🔧 Zig: 已安装")
+                self.status_compiler.setStyleSheet("color: green;")
+            else:
+                self.status_compiler.setText("🔧 Zig: 未安装")
+                self.status_compiler.setStyleSheet("color: orange;")
+            return
+        if backend == "auto":
+            parts = []
+            if self._cached_has_mingw:
+                parts.append(f"MinGW {self._cached_mingw_version}")
+            if self._cached_has_msvc:
+                parts.append(f"MSVC {self._cached_msvc_version}")
+            if self._cached_has_zig:
+                parts.append(f"Zig {self._cached_zig_version}")
+            if self._cached_has_clang:
+                parts.append(f"Clang {self._cached_clang_version}")
+            if parts:
+                self.status_compiler.setText("🔧 " + " | ".join(parts))
+                self.status_compiler.setStyleSheet("color: green;")
+            else:
+                self.status_compiler.setText("🔧 编译器: 未检测到")
+                self.status_compiler.setStyleSheet("color: red;")
+            return
+        if backend == "clang":
+            if self._cached_has_clang:
+                self.status_compiler.setText(f"🔧 Clang: {self._cached_clang_version}")
+                self.status_compiler.setStyleSheet("color: green;")
+            else:
+                self.status_compiler.setText("🔧 Clang: 未安装")
+                self.status_compiler.setStyleSheet("color: orange;")
+            return
         if backend == "MSVC":
-            if self._cached_has_msvc and self._cached_msvc_version:
+            if self._cached_has_msvc:
                 self.status_compiler.setText(f"🔧 MSVC: {self._cached_msvc_version}")
                 self.status_compiler.setStyleSheet("color: green;")
             else:
                 self.status_compiler.setText("🔧 MSVC: 未安装")
                 self.status_compiler.setStyleSheet("color: red;")
-        elif backend == "MinGW64":
-            if self._cached_has_mingw and self._cached_mingw_version:
+            return
+        if backend == "MinGW64":
+            if self._cached_has_mingw:
                 self.status_compiler.setText(f"🔧 MinGW: {self._cached_mingw_version}")
                 self.status_compiler.setStyleSheet("color: green;")
             else:
                 self.status_compiler.setText("🔧 MinGW: 未安装")
                 self.status_compiler.setStyleSheet("color: red;")
-        else:
-            if self._cached_has_mingw and self._cached_mingw_version:
-                self.status_compiler.setText(f"🔧 MinGW: {self._cached_mingw_version}")
-                self.status_compiler.setStyleSheet("color: green;")
-            elif self._cached_has_msvc and self._cached_msvc_version:
-                self.status_compiler.setText(f"🔧 MSVC: {self._cached_msvc_version}")
-                self.status_compiler.setStyleSheet("color: green;")
-            else:
-                self.status_compiler.setText("🔧 编译器: 未安装")
-                self.status_compiler.setStyleSheet("color: red;")
+            return
+        self.status_compiler.setText("")
 
     def _display_rust_status(self):
         """显示Rust状态（从缓存）- 只用于PyOxidizer和PyApp"""
@@ -6812,7 +6731,7 @@ class PackageMainWindow(QMainWindow):
             self.status_compiler.setStyleSheet("color: orange;")
 
     def _display_packer_version_from_cache(self, packer):
-        """从缓存显示打包器版本（不触发检测）"""
+        """从缓存显示打包器版本"""
         if not hasattr(self, 'python_path') or self.python_path is None:
             return
         if not hasattr(self, 'packer_combo') or self.packer_combo is None:
@@ -6822,33 +6741,17 @@ class PackageMainWindow(QMainWindow):
             self.status_packer.setText("📦 等待Python...")
             self.status_packer.setStyleSheet("color: orange;")
             return
-        display = self._get_packer_display_name(packer)
+        if packer in ["PyInstaller-spec", "PyInstaller-cmd"]:
+            display = "PyInstaller"
+        else:
+            display = packer
         cache_key = f"{display}@{python_exe}"
-        # 先查内存缓存
         version = self._packer_versions_cache.get(cache_key)
-        # 内存没有，查文件缓存
-        if version is None:
-            try:
-                if os.path.exists(self.global_cache_file):
-                    with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
-                        cache_data = json.load(f)
-                    packer_versions = cache_data.get('packer_versions', {})
-                    version = packer_versions.get(cache_key)
-                    if version is not None:
-                        self._packer_versions_cache[cache_key] = version
-                        self._packer_cache_loaded = True
-            except Exception as e:
-                pass
-        # 有版本直接显示，不触发检测
-        if version is not None:
-            self._update_packer_status(display, version or "")
-            return
-        # 缓存中没有，显示"未检测"并触发后台检测
-        self.status_packer.setText(f"📦 {display}: 未检测")
-        self.status_packer.setStyleSheet("color: orange;")
-        # 只在有Python且未在检测中时触发
-        if not self._detecting_packer_versions and python_exe and os.path.exists(python_exe):
-            QTimer.singleShot(100, self._detect_all_packer_versions_async)
+        if version and isinstance(version, str) and version and version[0].isdigit():
+            self._update_packer_status(display, version)
+        else:
+            self.status_packer.setText(f"📦 {display}: 未检测")
+            self.status_packer.setStyleSheet("color: orange;")
 
     def _update_all_backend_ui(self):
         """从缓存更新所有后端UI + 打包器版本"""
@@ -6898,7 +6801,6 @@ class PackageMainWindow(QMainWindow):
 
     def _check_single_instance(self):
         """检查是否已有实例运行（允许源码和EXE同时运行）"""
-        import socket
         import hashlib
         # 判断当前运行模式
         is_frozen = getattr(sys, 'frozen', False)
@@ -6960,6 +6862,8 @@ class PackageMainWindow(QMainWindow):
         self._spec_monitor_timer = None
         self._stop_logging = False
         self._building_exclude = False
+        self.progress_update_signal.connect(self._on_progress_update)
+        self.closure_finished_signal.connect(self._on_closure_finished)
         # ===== 从缓存文件加载数据到内存（不重置为空） =====
         self._packages_cache = {}  
         self._packages_cache_time = {}
@@ -6969,6 +6873,14 @@ class PackageMainWindow(QMainWindow):
         self._cached_mingw_path = ""
         self._cached_msvc_version = ""
         self._cached_mingw_version = ""
+        self._cached_has_zig = False
+        self._cached_has_clang = False
+        self._cached_zig_path = ""
+        self._cached_zig_type = ""
+        self._cached_clang_path = ""
+        self._cached_zig_version = ""
+        self._cached_clang_version = ""
+        self._zig_cache = {}
         self._cached_has_cargo = False
         self._cached_has_rustc = False
         self._cached_cargo_path = ""
@@ -6980,12 +6892,14 @@ class PackageMainWindow(QMainWindow):
         self._packer_versions_cache = {}
         self._nuitka_compat_notified = False
         self._ui_updated = False
+        self._backends_detected = False  # 后端检测是否已执行（用于缓存持久化）
+        self._cache_io_lock = threading.Lock()  # 缓存文件写互斥（检测线程/主线程并发时防竞争）
         self._detecting_packer_versions = False
         self._packer_versions_detected = False
         self._packer_cache_loaded = False
         self._syntax_cache = None 
         self._analyze_done = False  
-        self._last_non_venv_python = ""  
+        self._last_non_venv_python = ""
         # ===== 读取缓存文件到内存 =====
         if os.path.exists(self.global_cache_file):
             try:
@@ -7005,6 +6919,13 @@ class PackageMainWindow(QMainWindow):
                         self._cached_mingw_path = compiler.get('mingw_path', '')
                         self._cached_msvc_version = compiler.get('msvc_version', '')
                         self._cached_mingw_version = compiler.get('mingw_version', '')
+                        # ===== 新增：读取 Zig 和 Clang 缓存 =====
+                        self._cached_has_zig = compiler.get('zig', False)
+                        self._cached_has_clang = compiler.get('clang', False)
+                        self._cached_zig_path = compiler.get('zig_path', '')
+                        self._cached_clang_path = compiler.get('clang_path', '')
+                        self._cached_zig_version = compiler.get('zig_version', '')
+                        self._cached_clang_version = compiler.get('clang_version', '')
                     # 加载Rust
                     rust = cache_data.get('rust_compiler', {})
                     if rust:
@@ -7062,12 +6983,11 @@ class PackageMainWindow(QMainWindow):
         self.show()
         QApplication.processEvents()
         # ===== 窗口显示后再加载数据 =====
-        QTimer.singleShot(50, self._load_all_cached_data)
+        QTimer.singleShot(100, self._load_all_cached_data)
         self.venv_log_signal.connect(self.safe_log)
         self.venv_progress_signal.connect(self._on_venv_progress)
         self.venv_finish_signal.connect(self._on_venv_finish)
         self.packer_ver_signal.connect(self._update_packer_status)
-        FILTER_MODULES = {'PyInstaller', 'module', 'pyi_hooks_contrib', 'pyi_hooks'}
         self.hidden_imports_list = [m for m in self.hidden_imports_list if m not in FILTER_MODULES]
         self.hidden_listbox.clear()
         for mod in self.hidden_imports_list:
@@ -7093,6 +7013,33 @@ class PackageMainWindow(QMainWindow):
             super().showEvent(event)
             QTimer.singleShot(1000, self._background_prepare_environment)
         load_dep_map()
+        # 启动后后台异步检测所有环境打包器
+        QTimer.singleShot(1000, self._init_async_packer_detection)
+
+    def _on_progress_update(self, value):
+        self.status_progress.setValue(value)
+        self.status_progress.setFormat(f"{value}%")
+        QApplication.processEvents()
+        if value < 30:
+            color = "#f44336"
+        elif value < 70:
+            color = "#ff9800"
+        else:
+            color = "#9C27B0"
+        self.status_progress.setStyleSheet(f"""
+            QProgressBar {{
+                border: none;
+                border-radius: 6px;
+                background-color: #e0e0e0;
+                text-align: center;
+                color: #9C27B0;
+                font-weight: bold;
+            }}
+            QProgressBar::chunk {{
+                background-color: {color};
+                border-radius: 6px;
+            }}
+        """)
 
     def _filter_python_list(self):
         """过滤掉非 python 的 exe保持顺序，同步删除缓存"""
@@ -7142,7 +7089,7 @@ class PackageMainWindow(QMainWindow):
     def _on_system_status_updated(self, cpu_percent, mem_percent, mem_used_gb, mem_total_gb, temp_str=""):
         try:
             # ===== CPU（三色） =====
-            cpu_text = f"CPU: {cpu_percent:.0f}%"
+            cpu_text = f"🧠: {cpu_percent:.0f}%"
             if hasattr(self, 'status_cpu'):
                 self.status_cpu.setText(cpu_text)
                 # 颜色判断
@@ -7154,7 +7101,7 @@ class PackageMainWindow(QMainWindow):
                     cpu_color = "#4CAF50"
                 self.status_cpu.setStyleSheet(f"color: {cpu_color}; font-weight: bold;")
             # ===== 内存（三色） =====
-            mem_text = f"内存: {mem_percent:.0f}%"
+            mem_text = f"🗄️: {mem_percent:.0f}%"
             if hasattr(self, 'status_memory'):
                 self.status_memory.setText(mem_text)
                 if mem_percent > 80:
@@ -7205,41 +7152,6 @@ class PackageMainWindow(QMainWindow):
             self.progress_bar.setValue(value)
             self.progress_bar.update()
 
-    def _lazy_init(self):
-        """延迟初始化"""
-        self._load_config()
-        QApplication.processEvents()
-        QTimer.singleShot(500, self._enable_all_drag_drop)
-        QTimer.singleShot(1000, self._check_current_packer_after_init)
-        QTimer.singleShot(2000, self._load_packer_versions_from_cache_only)
-        QTimer.singleShot(10, self._load_remaining)
-        QTimer.singleShot(300, self._init_packer_panel_visibility)
-
-    def _replace_with_drag_drop(self):
-        """将输入框替换为支持拖拽的版本"""
-        if not hasattr(self, 'input_file'):
-            return
-        current_text = self.input_file.text()
-        parent_layout = self.input_file.parentWidget().layout()
-        if not parent_layout:
-            return
-        index = -1
-        for i in range(parent_layout.count()):
-            item = parent_layout.itemAt(i)
-            if item and item.widget() == self.input_file:
-                index = i
-                break
-        if index < 0:
-            return
-        # 创建新的 DragDropLineEdit
-        new_input = DragDropLineEdit()
-        new_input.setText(current_text)
-        new_input.setPlaceholderText("可拖拽文件到此处...")
-        parent_layout.replaceWidget(self.input_file, new_input)
-        self.input_file.deleteLater()
-        self.input_file = new_input
-        self.safe_log("✅ 拖拽功能已启用")
-
     def _retry_detect_packer_version(self, display_name):
         """重试检测打包器版本"""
         python_exe = self.python_path.currentText()
@@ -7275,16 +7187,6 @@ class PackageMainWindow(QMainWindow):
             QTimer.singleShot(500, self._detect_compilers_async)
         QTimer.singleShot(800, self._preload_packer_versions)
 
-    def _on_custom_progress(self, value, text):
-        self.progress_bar.setValue(value)
-        self.progress_label.setText(text)
-        QApplication.processEvents()
-
-    def _garbage_collect(self):
-        """定期回收内存"""
-        import gc
-        gc.collect()
-
     def _update_time(self):
         """更新时间显示"""
         if self.pack_start_time:
@@ -7319,12 +7221,11 @@ class PackageMainWindow(QMainWindow):
         """输入文件改变时自动更新输出名称（带项目级环境隔离缓存）"""
         if not text or not os.path.exists(text):
             return
-        # 1. 停止旧线程
+        # 停止旧线程
         if hasattr(self, '_analyze_thread') and self._analyze_thread is not None:
             if self._analyze_thread.isRunning():
                 self._analyze_thread.quit()
                 self._analyze_thread.wait(300)
-        # 2. 立即更新基础UI
         text = os.path.normpath(text)
         fixed_path = self._auto_fix_filename_spaces(text)
         if fixed_path and fixed_path != text:
@@ -7342,15 +7243,20 @@ class PackageMainWindow(QMainWindow):
         output_dir = os.path.join(script_dir, "dist")
         os.makedirs(output_dir, exist_ok=True)
         self.output_dir.setText(self._format_path(output_dir))
-        # 3. 先尝试加载项目缓存（按环境隔离）
+        # ===== 关键修复：fast_mode 加载缓存，不阻塞主线程 =====
         self.status_label.setText("📦 检查缓存...")
-        QApplication.processEvents()
-        cache = self._load_project_cache()
+        cache = self._load_project_cache(fast_mode=True)
         if cache:
-            # 缓存命中！直接恢复
             self._restore_from_project_cache(cache, text, base_name)
+            # 后台静默验证，若失效自动提示
+            def _bg_verify():
+                time.sleep(0.3)  # 让 UI 先完成渲染
+                full = self._load_project_cache(fast_mode=False)
+                if full is None:
+                    self.safe_log("🔄 后台校验：环境包列表已变化，缓存失效")
+            threading.Thread(target=_bg_verify, daemon=True).start()
             return
-        # 4. 缓存未命中，走正常分析流程
+        # 缓存未命中，走正常分析
         self.hidden_imports_list.clear()
         self.hidden_listbox.clear()
         self.exclude_list.clear()
@@ -7369,7 +7275,6 @@ class PackageMainWindow(QMainWindow):
             lambda msg: self.safe_log(f"⚠️ 分析依赖失败: {msg}")
         )
         self._analyze_thread.start()
-        # 延迟依赖检查标记
         self._deps_check_pending = True
 
     def _restore_from_project_cache(self, cache, script_path, base_name):
@@ -7425,37 +7330,12 @@ class PackageMainWindow(QMainWindow):
         # 延迟检查依赖（后台）
         self._deps_check_pending = True
 
-    def _lazy_check_deps(self):
-        """延迟依赖检查，避免频繁切换文件时重复检查（后台执行）"""
-        if not getattr(self, '_deps_check_pending', False):
-            return
-        self._deps_check_pending = False
-        script = getattr(self, '_pending_analyze_file', '') or self.input_file.text()
-        if not script or not os.path.exists(script):
-            return
-        # 只在后台做轻量级检查，不阻塞UI
-        if not self.use_venv:
-            # 非虚拟环境：只检查，不自动安装（避免阻塞）
-            threading.Thread(target=self._check_deps_only, args=(script,), daemon=True).start()
-        elif self.venv_mode.isChecked():
-            venv_python = self._get_venv_python()
-            if venv_python and os.path.exists(venv_python):
-                # 虚拟环境也改为后台，且只在真正缺失时才提示
-                threading.Thread(
-                    target=self._check_venv_deps_only, 
-                    args=(venv_python, script), 
-                    daemon=True
-                ).start()
-
     def _check_deps_only(self, script_path):
         """纯检查模式，不自动安装（避免阻塞打包）"""
-        # 这里可以复用你原有的分析逻辑，但只做对比不调用pip install
-        # 如果需要安装，在点击打包按钮时再执行
         pass
 
     def _check_venv_deps_only(self, venv_python, script_path):
         """虚拟环境纯检查模式"""
-        # 同样只做检查，安装放到打包前
         pass
 
     def _on_analyze_used_finished(self, result, real_imports, extra_deps, uses_tkinter):
@@ -7503,7 +7383,7 @@ class PackageMainWindow(QMainWindow):
             extra_display = ', '.join(sorted(extra_deps)[:10])
             if len(extra_deps) > 10:
                 extra_display += f' ... 等 {len(extra_deps)} 个'
-            self.safe_log(f"📦 附属依赖 {len(extra_deps)} 个: {extra_display}")
+            self.safe_log(f"📦 传递依赖 {len(extra_deps)} 个: {extra_display}")
         # 构建排除列表
         self._build_exclude_list_from_analysis()
         self._update_auto_import_count()
@@ -7761,11 +7641,13 @@ class PackageMainWindow(QMainWindow):
         r5 = QHBoxLayout()
         r5.addWidget(QLabel("平台:"))
         self.platform_combo = QComboBox()
+        self.platform_combo.setToolTip("选择系统")
         self.platform_combo.setStyleSheet("QComboBox { width: 50px; }")
         self.platform_combo.addItems(["current", "Windows", "Linux", "macOS"])
         r5.addWidget(self.platform_combo)
         r5.addWidget(QLabel("打包:"))
         self.packer_combo = QComboBox()
+        self.packer_combo.setToolTip("选择打包编译工具")
         self.packer_combo.setStyleSheet("QComboBox { width: 90px; }")
         self.packer_combo.addItems([
             "PyInstaller-spec","PyInstaller-cmd", "Nuitka", "PyApp",
@@ -7774,14 +7656,18 @@ class PackageMainWindow(QMainWindow):
         self.packer_combo.currentTextChanged.connect(self._on_packer_changed)
         r5.addWidget(self.packer_combo)
         self.single_mode = QCheckBox("单模")
+        self.single_mode.setToolTip("单个exe/文件夹模式")
         self.single_mode.setChecked(True)
         r5.addWidget(self.single_mode)
         self.venv_mode = QCheckBox("虚拟")
+        self.venv_mode.setToolTip("创建虚拟环境开关")
         self.venv_mode.stateChanged.connect(self._on_venv_switch)
         r5.addWidget(self.venv_mode)
         self.debug_mode = QCheckBox("调试")
+        self.debug_mode.setToolTip("cmd调试窗口开关")
         r5.addWidget(self.debug_mode)
         self.uv_mode = QCheckBox("uv加速")
+        self.uv_mode.setToolTip("uv加速安装开关")
         self.uv_mode.stateChanged.connect(self._on_uv_switch)
         r5.addWidget(self.uv_mode)
         # ===== 新增：自动排除复选框 =====
@@ -7790,8 +7676,14 @@ class PackageMainWindow(QMainWindow):
         self.auto_exclude_cb.setToolTip("勾选后自动排除不需要的模块，减小打包体积")
         self.auto_exclude_cb.stateChanged.connect(self._on_auto_exclude_toggled)
         r5.addWidget(self.auto_exclude_cb)
+        self.dep_closure_cb = QCheckBox("闭包")
+        self.dep_closure_cb.setChecked(False)
+        self.dep_closure_cb.setToolTip("开启后递归解析所有传递依赖（体积会变大，但更稳定）")
+        self.dep_closure_cb.stateChanged.connect(self._on_dep_closure_toggled)
+        r5.addWidget(self.dep_closure_cb)
         r5.addWidget(QLabel("压缩:"))
         self.compress_combo = QComboBox()
+        self.compress_combo.setToolTip("调整压缩级别")
         self.compress_combo.addItems(["默认", "不压", "最快", "最好", "极致"])
         self.compress_combo.setCurrentText("默认")
         r5.addWidget(self.compress_combo)
@@ -7829,6 +7721,7 @@ class PackageMainWindow(QMainWindow):
         r6.addWidget(self.adv_count_label)
         r6.addWidget(QLabel("进度:"))
         self.progress_style_combo = QComboBox()
+        self.progress_style_combo.setToolTip("选择进度条样式")
         self.progress_style_combo.addItems(["🌈 七彩虹", "😊 点阵图", "🌿 薄荷绿", "🌸 樱花粉", "🌌 星际紫", "🌊 深海蓝"])
         self.progress_style_combo.currentTextChanged.connect(self._on_progress_style_changed)
         r6.addWidget(self.progress_style_combo)
@@ -8147,11 +8040,11 @@ class PackageMainWindow(QMainWindow):
         self.status_pct.setVisible(False)
         sl.addWidget(self.status_pct)
         sl.addWidget(QLabel(" | "))
-        self.status_cpu = QLabel("CPU: 0%")
+        self.status_cpu = QLabel("")
         self.status_cpu.setFixedWidth(80)
         self.status_cpu.setStyleSheet("font-weight: bold;")
         sl.addWidget(self.status_cpu)
-        self.status_memory = QLabel("内存: 0%")
+        self.status_memory = QLabel("")
         self.status_memory.setFixedWidth(80)
         self.status_memory.setStyleSheet("font-weight: bold;")
         sl.addWidget(self.status_memory)
@@ -8225,13 +8118,311 @@ class PackageMainWindow(QMainWindow):
         self._add_tooltip(self.adv_btn, "管理隐藏导入和数据文件")
         self._add_tooltip(self.theme_btn, "切换界面主题")
 
-    def _add_exclude_item(self, mod):
-        """添加排除项（带复选框）"""
-        item = QListWidgetItem(mod)
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(Qt.CheckState.Unchecked)
-        item.setData(Qt.ItemDataRole.UserRole, mod)
-        self.exclude_listbox.addItem(item)
+    def _on_dep_closure_toggled(self, state):
+        """依赖闭包开关切换（带完整进度条 0~100%）"""
+        if state == Qt.CheckState.Checked.value:
+            self.safe_log("🔗 已开启依赖闭包（体积会变大，但更稳定）")
+        else:
+            self.safe_log("🔗 已关闭依赖闭包（使用静态依赖表）")
+        self.status_label.setText("⏳ 解析中...")
+        self.status_progress.setVisible(True)
+        self.status_progress.setRange(0, 100)
+        self.status_progress.setValue(0)
+        self.status_pct.setVisible(True)
+        #self.status_pct.setText("0%")
+        script = self.input_file.text()
+        if not script or not os.path.exists(script):
+            self._on_closure_finished()
+            return
+
+        def async_build():
+            try:
+                # 修复：QTimer.singleShot 在子线程不会触发，改用信号跨线程
+                self._build_exclude_list_from_analysis(
+                    progress_callback=self.progress_update_signal.emit
+                )
+                self.closure_finished_signal.emit()
+            except Exception as e:
+                self.safe_log(f"⚠️ 依赖闭包解析异常: {e}")
+                self.closure_finished_signal.emit()
+        threading.Thread(target=async_build, daemon=True).start()
+
+    def _on_closure_finished(self):
+        """闭包分析完成回调"""
+
+        def _do_finish():
+            self.status_progress.setVisible(False)
+            self.status_pct.setVisible(False)
+            self.status_label.setText("就绪")
+            #self.safe_log("✅ 依赖闭包分析完成")
+        QTimer.singleShot(600, _do_finish)
+
+    def _get_dependency_graph(self, python_exe, progress_callback=None):
+        """读取目标环境的包依赖图（带缓存 + 流式进度）"""
+        if not hasattr(self, '_dep_graph_cache'):
+            self._dep_graph_cache = {}
+        # 修正：缓存键统一用环境ID，与 _load_dep_cache / _save_dep_cache 保持一致
+        cache_key = self._get_python_env_id(python_exe)
+        if cache_key in self._dep_graph_cache:
+            return self._dep_graph_cache[cache_key]
+        # 项目文件缓存（进程重启后秒开，不破坏原 .pypack_cache.json）
+        cached = self._load_dep_cache(python_exe)
+        if cached is not None:
+            self._dep_graph_cache[cache_key] = cached
+            return cached
+        empty = {'requires': {}, 'toplevel': {}}
+        if not python_exe or not os.path.exists(python_exe):
+            return empty
+        probe = textwrap.dedent('''
+        import json, sys
+        try:
+            from importlib import metadata as md
+        except ImportError:
+            try:
+                import importlib_metadata as md
+            except ImportError:
+                print(json.dumps({"requires": {}, "toplevel": {}}))
+                sys.exit(0)
+        def norm(n):
+            return n.strip().lower().replace("_", "-")
+        req_map = {}
+        top_map = {}
+        all_dists = list(md.distributions())
+        total = len(all_dists)
+        batch = max(1, total // 20) if total > 0 else 1
+        for idx, dist in enumerate(all_dists):
+            if total > 0 and (idx + 1) % batch == 0:
+                pct = int((idx + 1) / total * 100)
+                sys.stderr.write(f"PROGRESS:{pct}\\n")
+                sys.stderr.flush()
+            try:
+                name = dist.metadata["Name"]
+            except Exception:
+                name = None
+            if not name:
+                continue
+            key = norm(name)
+            deps = []
+            try:
+                raw_reqs = dist.requires or []
+            except Exception:
+                raw_reqs = []
+            for r in raw_reqs:
+                if ";" in r:
+                    cond = r.split(";", 1)[1]
+                    if "extra" in cond:
+                        continue
+                dep = r.split(";")[0].strip()
+                cut = len(dep)
+                for sep in ("[", "(", "<", ">", "=", "!", "~", " "):
+                    pos = dep.find(sep)
+                    if pos > 0:
+                        cut = min(cut, pos)
+                dep = norm(dep[:cut])
+                if dep:
+                    deps.append(dep)
+            req_map[key] = sorted(set(deps))
+            tops = []
+            try:
+                txt = dist.read_text("top_level.txt")
+                if txt:
+                    for ln in txt.splitlines():
+                        ln = ln.strip()
+                        if ln and not ln.startswith("_"):
+                            tops.append(ln.replace("\\\\", "/").split("/")[0])
+            except Exception:
+                pass
+            if not tops:
+                try:
+                    for f in (dist.files or [])[:400]:
+                        p = str(f).replace("\\\\", "/")
+                        head = p.split("/")[0]
+                        if head.endswith((".dist-info", ".egg-info", ".data")):
+                            continue
+                        if head.endswith(".py"):
+                            head = head[:-3]
+                        if head and head.isidentifier():
+                            tops.append(head)
+                except Exception:
+                    pass
+            top_map[key] = sorted(set(tops))
+        print(json.dumps({"requires": req_map, "toplevel": top_map}))
+        ''')
+        clean_env = {
+            'PATH': os.environ.get('PATH', ''),
+            'PYTHONNOUSERSITE': '1',
+            'PYTHONIOENCODING': 'utf-8',
+        }
+        if sys.platform == 'win32':
+            clean_env['SYSTEMROOT'] = os.environ.get('SYSTEMROOT', '')
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == 'win32':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            creationflags = subprocess.CREATE_NO_WINDOW
+        self.safe_log("⏳ 正在扫描包元数据（可能需要1-2分钟）...")
+        try:
+            proc = subprocess.Popen(
+                [python_exe, '-c', probe],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding='utf-8', errors='replace',
+                env=clean_env, startupinfo=startupinfo,
+                creationflags=creationflags
+            )
+            stdout_lines = []
+            def _read_stdout():
+                for line in proc.stdout:
+                    stdout_lines.append(line)
+            def _read_stderr():
+                for line in proc.stderr:
+                    line = line.strip()
+                    if line.startswith("PROGRESS:"):
+                        try:
+                            p = int(line.split(":", 1)[1])
+                            mapped = min(int(p * 70 / 100), 70)
+                            if progress_callback:
+                                progress_callback(mapped)
+                        except Exception:
+                            pass
+            t_out = threading.Thread(target=_read_stdout, daemon=True)
+            t_err = threading.Thread(target=_read_stderr, daemon=True)
+            t_out.start()
+            t_err.start()
+            proc.wait(timeout=180)
+            t_out.join(timeout=3)
+            t_err.join(timeout=3)
+            if proc.returncode == 0:
+                stdout = ''.join(stdout_lines)
+                if stdout.strip():
+                    graph = json.loads(stdout.strip().splitlines()[-1])
+                    self._dep_graph_cache[cache_key] = graph
+                    self._save_dep_cache(python_exe, graph)
+                    return graph
+            else:
+                self.safe_log("⚠️ 依赖元数据解析失败")
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            self.safe_log("⚠️ 依赖元数据解析超时（180秒），回退到静态表")
+        except Exception as e:
+            self.safe_log(f"⚠️ 依赖元数据解析异常: {e}")
+        self._dep_graph_cache[cache_key] = empty
+        return empty
+
+    def _load_dep_cache(self, python_exe):
+        """从项目缓存文件读取依赖图（追加模式，不破坏原有数据）"""
+        path = self._get_project_cache_path()
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            with open(path, 'r', encoding='utf-8-sig') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return None
+            cache = data.get('dep_graph_cache', {})
+            key = self._get_python_env_id(python_exe)
+            entry = cache.get(key)
+            if entry and entry.get('python_exe') == python_exe:
+                return entry.get('graph')
+        except Exception:
+            pass
+        return None
+
+    def _save_dep_cache(self, python_exe, graph):
+        """写入项目缓存文件（追加 dep_graph_cache，读取失败则放弃，绝不覆盖）"""
+        path = self._get_project_cache_path()
+        if not path:
+            return
+        data = {}
+        file_exists = os.path.exists(path)
+        if file_exists:
+            try:
+                with open(path, 'r', encoding='utf-8-sig') as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    # 原文件不是字典格式，为安全起见不写入
+                    return
+            except Exception:
+                # 读取失败（文件损坏/被锁/空文件等），放弃写入，保护原文件
+                return
+        if 'dep_graph_cache' not in data:
+            data['dep_graph_cache'] = {}
+        key = self._get_python_env_id(python_exe)
+        data['dep_graph_cache'][key] = {
+            'python_exe': python_exe,
+            'graph': graph,
+            'timestamp': time.time()
+        }
+        try:
+            with open(path, 'w', encoding='utf-8-sig') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _expand_dependency_closure(self, python_exe, root_names, progress_callback=None):
+        """从根包集合递归展开完整依赖闭包"""
+        try:
+            graph = self._get_dependency_graph(python_exe, progress_callback=progress_callback)
+        except Exception as e:
+            self.safe_log(f"⚠️ 依赖图获取失败: {e}，跳过闭包展开")
+            return set()
+        if progress_callback:
+            progress_callback(75)  # 扫描完成，进入BFS
+        requires = graph.get('requires') or {}
+        toplevel = graph.get('toplevel') or {}
+        if not requires:
+            if progress_callback:
+                progress_callback(100)
+            return set()
+
+        def norm(n):
+            return str(n).strip().lower().replace('_', '-')
+
+        def to_underscore(s):
+            return s.replace('-', '_')
+        mod2dist = {}
+        for dist_name, mods in toplevel.items():
+            for m in mods:
+                mod2dist.setdefault(m.lower(), set()).add(dist_name)
+        queue = []
+        for raw in root_names:
+            n = norm(raw)
+            if n in requires:
+                queue.append(n)
+            for d in mod2dist.get(str(raw).strip().lower(), ()):
+                queue.append(d)
+        if not queue:
+            if progress_callback:
+                progress_callback(100)
+            return set()
+        visited = set()
+        total = len(queue)
+        processed = 0
+        while queue:
+            cur = queue.pop()
+            if cur in visited:
+                continue
+            visited.add(cur)
+            processed += 1
+            if progress_callback and total > 0:
+                # BFS 阶段：75% → 95%
+                pct = min(75 + int(processed / total * 20), 95)
+                progress_callback(pct)
+            for dep in requires.get(cur, ()):
+                if dep not in visited:
+                    queue.append(dep)
+        if progress_callback:
+            progress_callback(100)
+        closure = set()
+        for dist_name in visited:
+            closure.add(to_underscore(dist_name))
+            for m in toplevel.get(dist_name, ()):
+                closure.add(m.lower())
+        return closure
 
     def _save_clean_threshold(self):
         """保存清理阈值到缓存"""
@@ -8265,7 +8456,6 @@ class PackageMainWindow(QMainWindow):
                 os.startfile(exe_path)
                 self.safe_log("✅ EXE已启动 (os.startfile)")
             else:
-                import subprocess
                 subprocess.Popen(
                     [exe_path],
                     cwd=os.path.dirname(exe_path),
@@ -8571,41 +8761,127 @@ class PackageMainWindow(QMainWindow):
             self.safe_log(f"📦 已恢复全部 {len(restored)} 个包")
             dialog.close()
 
-    def _get_installed_packages_for_restore(self, python_exe):
-        """获取已安装的包列表（用于恢复功能）"""
-        packages = set()
-        try:
-            result = self._run_hidden(
-                [python_exe, '-m', 'pip', 'list', '--format=json'],
-                capture_output=True, text=True, timeout=30,
-                startupinfo=get_startupinfo()
-            )
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                for item in data:
-                    packages.add(item['name'].lower())
-        except Exception as e:
-            self.safe_log(f"⚠️ 获取包列表失败: {e}")
-        return packages
-
     def _get_installed_packages(self, python_exe):
-        """获取指定Python环境的已安装包列表（返回小写->原始名称映射）"""
+        """获取指定Python环境的已安装包列表（带5分钟缓存，避免启动阻塞）"""
         if not python_exe or not os.path.exists(python_exe):
-            return {}  # ← 只返回空字典
-        import subprocess
-        import json
-        # 清理环境变量
+            return {}
+        now = time.time()
+        cache_key = python_exe
+        # 初始化类级缓存
+        if not hasattr(self, '_installed_packages_cache'):
+            self._installed_packages_cache = {}
+            self._installed_packages_cache_time = {}
+        # 命中缓存直接返回（5分钟TTL）
+        if cache_key in self._installed_packages_cache:
+            cached_time = self._installed_packages_cache_time.get(cache_key, 0)
+            if now - cached_time < 300:  # 5分钟
+                # self.safe_log(f"📋 包列表缓存命中 ({len(self._installed_packages_cache[cache_key])} 个)")
+                return self._installed_packages_cache[cache_key]
+        result = {}
+        data = run_pip_list(python_exe, on_error=lambda e: self.safe_log(f"⚠️ 获取包列表失败: {e}"))
+        if data:
+            result = {item['name'].lower(): item['name'] for item in data}
+        # 写入缓存
+        self._installed_packages_cache[cache_key] = result
+        self._installed_packages_cache_time[cache_key] = now
+        return result
+
+    def _get_dependency_graph(self, python_exe, progress_callback=None):
+        """读取目标环境的包依赖图（带缓存 + 流式进度）"""
+        if not hasattr(self, '_dep_graph_cache'):
+            self._dep_graph_cache = {}
+        cache_key = self._get_python_env_id(python_exe)
+        if cache_key in self._dep_graph_cache:
+            return self._dep_graph_cache[cache_key]
+        cached = self._load_dep_cache(python_exe)
+        if cached is not None:
+            self._dep_graph_cache[cache_key] = cached
+            return cached
+        empty = {'requires': {}, 'toplevel': {}}
+        if not python_exe or not os.path.exists(python_exe):
+            return empty
+        probe = textwrap.dedent('''
+        import json, sys
+        try:
+            from importlib import metadata as md
+        except ImportError:
+            try:
+                import importlib_metadata as md
+            except ImportError:
+                print(json.dumps({"requires": {}, "toplevel": {}}))
+                sys.exit(0)
+        def norm(n):
+            return n.strip().lower().replace("-", "_")
+        req_map = {}
+        top_map = {}
+        all_dists = list(md.distributions())
+        total = len(all_dists)
+        batch = max(1, total // 20) if total > 0 else 1
+        for idx, dist in enumerate(all_dists):
+            if total > 0 and (idx + 1) % batch == 0:
+                pct = int((idx + 1) / total * 100)
+                sys.stderr.write(f"PROGRESS:{pct}\\n")
+                sys.stderr.flush()
+            try:
+                name = dist.metadata["Name"]
+            except Exception:
+                name = None
+            if not name:
+                continue
+            key = norm(name)
+            deps = []
+            try:
+                raw_reqs = dist.requires or []
+            except Exception:
+                raw_reqs = []
+            for r in raw_reqs:
+                if ";" in r:
+                    cond = r.split(";", 1)[1]
+                    if "extra" in cond:
+                        continue
+                dep = r.split(";")[0].strip()
+                cut = len(dep)
+                for sep in ("[", "(", "<", ">", "=", "!", "~", " "):
+                    pos = dep.find(sep)
+                    if pos > 0:
+                        cut = min(cut, pos)
+                dep = norm(dep[:cut])
+                if dep:
+                    deps.append(dep)
+            req_map[key] = sorted(set(deps))
+            tops = []
+            try:
+                txt = dist.read_text("top_level.txt")
+                if txt:
+                    for ln in txt.splitlines():
+                        ln = ln.strip()
+                        if ln and not ln.startswith("_"):
+                            tops.append(ln.replace("\\\\", "/").split("/")[0])
+            except Exception:
+                pass
+            if not tops:
+                try:
+                    for f in (dist.files or [])[:400]:
+                        p = str(f).replace("\\\\", "/")
+                        head = p.split("/")[0]
+                        if head.endswith((".dist-info", ".egg-info", ".data")):
+                            continue
+                        if head.endswith(".py"):
+                            head = head[:-3]
+                        if head and head.isidentifier():
+                            tops.append(head)
+                except Exception:
+                    pass
+            top_map[key] = sorted(set(tops))
+        print(json.dumps({"requires": req_map, "toplevel": top_map}))
+        ''')
         clean_env = {
             'PATH': os.environ.get('PATH', ''),
-            'SYSTEMROOT': os.environ.get('SYSTEMROOT', ''),
-            'SystemRoot': os.environ.get('SystemRoot', ''),
-            'COMSPEC': os.environ.get('COMSPEC', ''),
+            'PYTHONNOUSERSITE': '1',
+            'PYTHONIOENCODING': 'utf-8',
         }
-        for key in list(os.environ.keys()):
-            if key.upper().startswith('PYTHON') or key.upper() in ('VIRTUAL_ENV', 'CONDA_PREFIX'):
-                continue
-        clean_env['PYTHONNOUSERSITE'] = '1'
-        clean_env['PYTHONSAFEPATH'] = '1'
+        if sys.platform == 'win32':
+            clean_env['SYSTEMROOT'] = os.environ.get('SYSTEMROOT', '')
         startupinfo = None
         creationflags = 0
         if sys.platform == 'win32':
@@ -8613,151 +8889,56 @@ class PackageMainWindow(QMainWindow):
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
             creationflags = subprocess.CREATE_NO_WINDOW
+        self.safe_log("⏳ 正在扫描包元数据（可能需要1-2分钟）...")
         try:
-            result = subprocess.run(
-                [python_exe, '-m', 'pip', 'list', '--format=json'],
-                capture_output=True, text=True,
-                env=clean_env,
-                startupinfo=startupinfo,
-                creationflags=creationflags,
-                timeout=30
+            proc = subprocess.Popen(
+                [python_exe, '-c', probe],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding='utf-8', errors='replace',
+                env=clean_env, startupinfo=startupinfo,
+                creationflags=creationflags
             )
-            if result.returncode == 0 and result.stdout.strip():
-                data = json.loads(result.stdout)
-                # 返回小写->原始名称映射
-                installed_lower_map = {item['name'].lower(): item['name'] for item in data}
-                #self.safe_log(f"📋 已安装 {len(installed_lower_map)} 个包")
-                return installed_lower_map
+            stdout_lines = []
+            def _read_stdout():
+                for line in proc.stdout:
+                    stdout_lines.append(line)
+            def _read_stderr():
+                for line in proc.stderr:
+                    line = line.strip()
+                    if line.startswith("PROGRESS:"):
+                        try:
+                            p = int(line.split(":", 1)[1])
+                            mapped = min(int(p * 70 / 100), 70)
+                            if progress_callback:
+                                progress_callback(mapped)
+                        except Exception:
+                            pass
+            t_out = threading.Thread(target=_read_stdout, daemon=True)
+            t_err = threading.Thread(target=_read_stderr, daemon=True)
+            t_out.start()
+            t_err.start()
+            proc.wait(timeout=180)
+            t_out.join(timeout=3)
+            t_err.join(timeout=3)
+            if proc.returncode == 0:
+                stdout = ''.join(stdout_lines)
+                if stdout.strip():
+                    graph = json.loads(stdout.strip().splitlines()[-1])
+                    self._dep_graph_cache[cache_key] = graph
+                    self._save_dep_cache(python_exe, graph)
+                    return graph
             else:
-                self.safe_log(f"⚠️ pip list 失败: {result.stderr[:100] if result.stderr else '未知错误'}")
+                self.safe_log("⚠️ 依赖元数据解析失败")
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            self.safe_log("⚠️ 依赖元数据解析超时（180秒），回退到静态表")
         except Exception as e:
-            self.safe_log(f"⚠️ 获取包列表失败: {e}")
-        return {}  # ← 只返回空字典
-
-    def _get_needed_packages_from_hidden(self):
-        """从 hiddenimports 中提取需要的包"""
-        needed = set()
-        for mod in self.hidden_imports_list:
-            if mod in STANDARD_LIBS:
-                continue
-            pkg = MODULE_TO_PACKAGE.get(mod, mod.lower())
-            if pkg == 'pil':
-                pkg = 'pillow'
-            if pkg == 'opencv':
-                pkg = 'opencv-python'
-            needed.add(pkg)
-        if 'PyQt6' in self.hidden_imports_list:
-            needed.add('pyqt6')
-        if 'PyQt5' in self.hidden_imports_list:
-            needed.add('pyqt5')
-        if 'PySide6' in self.hidden_imports_list:
-            needed.add('pyside6')
-        if 'PySide2' in self.hidden_imports_list:
-            needed.add('pyside2')
-        if 'PIL' in self.hidden_imports_list or 'Image' in self.hidden_imports_list:
-            needed.add('pillow')
-        return needed
-
-    def _build_restore_exclude_list(self, all_installed, needed_packages):
-        """构建排除列表（用于恢复对话框）"""
-        exclude_list = []
-        std_lib_names = set(STANDARD_LIBS)
-        for pkg in all_installed:
-            if pkg in std_lib_names or pkg.startswith('_'):
-                continue
-            if pkg not in needed_packages:
-                exclude_list.append(pkg)
-        for mod in self.exclude_list:
-            if mod not in exclude_list:
-                exclude_list.append(mod)
-        return exclude_list
-
-    def _restore_selected_packages_ui(self, list_widget, dialog):
-        """恢复选中的包（支持多选）"""
-        selected_items = list_widget.selectedItems()
-        if not selected_items:
-            QMessageBox.warning(self, "提示", "请先选中要恢复的包（按住 Ctrl 或 Shift 多选）")
-            return
-        restored = []
-        for item in selected_items:
-            pkg = item.text()
-            if pkg in self.exclude_list:
-                self.exclude_list.remove(pkg)
-            if pkg not in self.hidden_imports_list:
-                self.hidden_imports_list.append(pkg)
-                self.hidden_listbox.addItem(pkg)
-            restored.append(pkg)
-            list_widget.takeItem(list_widget.row(item))
-        if restored:
-            self._update_hidden_count()
-            self._update_exclude_count()
-            self.safe_log(f"📦 已恢复 {len(restored)} 个包: {', '.join(restored)}")
-            if list_widget.count() == 0:
-                show_msg(self, "完成", "所有包已恢复",1)
-                dialog.accept()
-            else:
-                show_msg(self, "完成", f"已恢复 {len(restored)} 个包",1)
-
-    def _restore_used_packages(self, list_widget, dialog):
-        """一键恢复所有代码中用到的包（黄色标记的）"""
-        restored = []
-        items_to_remove = []
-        for i in range(list_widget.count() - 1, -1, -1):
-            item = list_widget.item(i)
-            if item.isHidden():
-                continue
-            pkg = item.text()
-            if item.background().color().name() == "#fff3cd":
-                if pkg in self.exclude_list:
-                    self.exclude_list.remove(pkg)
-                if pkg not in self.hidden_imports_list:
-                    self.hidden_imports_list.append(pkg)
-                    self.hidden_listbox.addItem(pkg)
-                restored.append(pkg)
-                items_to_remove.append(i)
-        for i in sorted(items_to_remove, reverse=True):
-            list_widget.takeItem(i)
-        if restored:
-            self._update_hidden_count()
-            self._update_exclude_count()
-            self.safe_log(f"📦 已恢复 {len(restored)} 个代码中用到的包")
-            if list_widget.count() == 0:
-                show_msg(self, "完成", "所有用到的包已恢复",1)
-                dialog.accept()
-            else:
-                show_msg(self, "完成", f"已恢复 {len(restored)} 个代码中用到的包",1)
-        else:
-            show_msg(self, "提示", "没有代码中用到的包需要恢复",1)
-
-    def _restore_all_excludes_ui(self, list_widget, dialog):
-        """恢复所有排除的包"""
-        if list_widget.count() == 0:
-            show_msg(self, "提示", "没有包需要恢复",1)
-            return
-        reply = QMessageBox.question(
-            self,
-            "确认恢复",
-            f"确定要恢复所有 {list_widget.count()} 个包吗？\n（包括代码中未检测到的）",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        restored = []
-        for i in range(list_widget.count() - 1, -1, -1):
-            item = list_widget.item(i)
-            pkg = item.text()
-            if pkg in self.exclude_list:
-                self.exclude_list.remove(pkg)
-            if pkg not in self.hidden_imports_list:
-                self.hidden_imports_list.append(pkg)
-                self.hidden_listbox.addItem(pkg)
-            restored.append(pkg)
-            list_widget.takeItem(i)
-        if restored:
-            self._update_hidden_count()
-            self._update_exclude_count()
-            self.safe_log(f"📦 已恢复全部 {len(restored)} 个包")
-            dialog.accept()
+            self.safe_log(f"⚠️ 依赖元数据解析异常: {e}")
+        self._dep_graph_cache[cache_key] = empty
+        return empty
 
     def _refresh_data_list(self):
         """刷新数据文件列表（保留排除标记状态）"""
@@ -8854,7 +9035,6 @@ class PackageMainWindow(QMainWindow):
             try:
                 self.safe_log(f"▶ 启动EXE: {os.path.basename(exe_path)}")
                 if sys.platform == 'win32':
-                    import ctypes
                     ctypes.windll.shell32.ShellExecuteW(
                         None,
                         "open",
@@ -8901,7 +9081,6 @@ class PackageMainWindow(QMainWindow):
                     'compress_level': self.compress_combo.currentText(),
                     'icon_path': self.icon_label.toolTip() if self.icon_label.text() else '',
                 }
-                import tempfile
                 config_file = os.path.join(tempfile.gettempdir(), 'external_tool_config.json')
                 with open(config_file, 'w', encoding='utf-8-sig') as f:
                     json.dump(params, f, ensure_ascii=False, indent=2, default=str)
@@ -8927,30 +9106,6 @@ class PackageMainWindow(QMainWindow):
             except Exception as e:
                 self.safe_log(f"❌ 运行EXE失败: {e}")
         threading.Thread(target=run, daemon=True).start()
-
-    def _run_py_direct(self, py_files):
-        """原有模式 - 直接运行"""
-        if len(py_files) > 1:
-            items = [os.path.basename(f) for f in py_files]
-            script_name, ok = QInputDialog.getItem(
-                self,
-                "选择脚本",
-                "请选择要运行的脚本:",
-                items,
-                0,
-                False
-            )
-            if not ok:
-                return
-            script_path = None
-            for src, dst in self.data_files_list:
-                if os.path.basename(src) == script_name:
-                    script_path = src
-                    break
-            if script_path:
-                self._execute_py_script(script_path)
-            return
-        self._execute_py_script(py_files[0])
 
     def _run_with_external_tool(self, py_files):
         """外部工具模式 - 传递参数给外部py"""
@@ -8984,7 +9139,6 @@ class PackageMainWindow(QMainWindow):
             if output_dir:
                 exe_temp_path = os.path.join(output_dir, 'extracted')
             else:
-                import tempfile
                 exe_temp_path = os.path.join(tempfile.gettempdir(), 'pyinstxtractor_extracted')
         # ===== 构建参数 =====
         params = {
@@ -9007,7 +9161,6 @@ class PackageMainWindow(QMainWindow):
             'icon_path': self.icon_label.toolTip() if self.icon_label.text() else '',
         }
         # ===== 写入JSON =====
-        import tempfile
         config_file = os.path.join(tempfile.gettempdir(), 'external_tool_config.json')
         with open(config_file, 'w', encoding='utf-8-sig') as f:
             json.dump(params, f, ensure_ascii=False, indent=2, default=str)
@@ -9052,7 +9205,6 @@ class PackageMainWindow(QMainWindow):
 
     def _get_target_temp_path(self, packer, target_exe):
         """获取目标EXE运行时自身的临时解压路径"""
-        import tempfile
         temp_base = tempfile.gettempdir()
         # ===== 获取主脚本名 =====
         main_script = self.input_file.text()
@@ -9699,57 +9851,6 @@ class PackageMainWindow(QMainWindow):
             return False, 0
     # ==== 打包控制 ====
 
-    def _fix_spec_indentation(self, spec_file):
-        """自动修复spec文件的缩进问题"""
-        try:
-            with open(spec_file, 'r', encoding='utf-8-sig') as f:
-                content = f.read()
-            lines = content.splitlines()
-            new_lines = []
-            in_exe = False
-            exe_indent = 0
-            exe_params_start = -1
-            for i, line in enumerate(lines):
-                stripped = line.strip()
-                # 检测 EXE( 行
-                if 'exe = EXE(' in stripped or stripped == 'exe = EXE(':
-                    in_exe = True
-                    exe_indent = len(line) - len(line.lstrip())
-                    exe_params_start = i + 1
-                    new_lines.append(line)
-                    continue
-                # 在 EXE 内部
-                if in_exe:
-                    # 检测是否已退出 EXE 括号
-                    if stripped == ')' or stripped == '),':
-                        in_exe = False
-                        new_lines.append(line)
-                        continue
-                    # 跳过空行
-                    if not stripped:
-                        new_lines.append(line)
-                        continue
-                    # 计算当前行缩进
-                    current_indent = len(line) - len(line.lstrip())
-                    expected_indent = exe_indent + 4
-                    # 如果缩进不正确，修正它
-                    if current_indent != expected_indent and stripped:
-                        # 确保行以逗号结尾或包含参数
-                        new_line = ' ' * expected_indent + stripped
-                        new_lines.append(new_line)
-                    else:
-                        new_lines.append(line)
-                    continue
-                new_lines.append(line)
-            # 写回文件
-            with open(spec_file, 'w', encoding='utf-8-sig') as f:
-                f.write('\n'.join(new_lines))
-            self.safe_log("🔧 已自动修复spec缩进")
-            return True
-        except Exception as e:
-            self.safe_log(f"⚠️ 自动修复spec缩进失败: {e}")
-            return False
-
     def _get_venv_python(self):
         """获取虚拟环境的Python路径"""
         exe_dir = get_exe_directory()
@@ -9785,28 +9886,30 @@ class PackageMainWindow(QMainWindow):
                 company = version_info.get('company', 'WCJ6376')
                 internal_name = re.sub(r'[^A-Za-z0-9_]', '_', product_name)
                 original_filename = f"{internal_name}.exe"
-                content = f'''VSVersionInfo(
-    ffi=FixedFileInfo(
-        filevers=({parse_vers("file_version")}),
-        prodvers=({parse_vers("product_version")}),
-        mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)
-    ),
-    kids=[
-        StringFileInfo([
-        StringTable(u'040904B0', [
-            StringStruct(u'CompanyName', u'{company}'),
-            StringStruct(u'FileDescription', u'{product_name}'),
-            StringStruct(u'FileVersion', u'{version_info.get("file_version", "1.0.0.0")}'),
-            StringStruct(u'InternalName', u'{internal_name}'),
-            StringStruct(u'LegalCopyright', u'Copyright (c) {datetime.datetime.now().year} {company}'),
-            StringStruct(u'OriginalFilename', u'{original_filename}'),
-            StringStruct(u'ProductName', u'{product_name}'),
-            StringStruct(u'ProductVersion', u'{version_info.get("product_version", "1.0.0.0")}')
-        ])
-        ]),
-        VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
-    ]
-    )'''
+                content = textwrap.dedent(f'''\
+                VSVersionInfo(
+                    ffi=FixedFileInfo(
+                        filevers=({parse_vers("file_version")}),
+                        prodvers=({parse_vers("product_version")}),
+                        mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)
+                    ),
+                    kids=[
+                        StringFileInfo([
+                            StringTable(u'040904B0', [
+                                StringStruct(u'CompanyName', u'{company}'),
+                                StringStruct(u'FileDescription', u'{product_name}'),
+                                StringStruct(u'FileVersion', u'{version_info.get("file_version", "1.0.0.0")}'),
+                                StringStruct(u'InternalName', u'{internal_name}'),
+                                StringStruct(u'LegalCopyright', u'Copyright (c) {datetime.datetime.now().year} {company}'),
+                                StringStruct(u'OriginalFilename', u'{original_filename}'),
+                                StringStruct(u'ProductName', u'{product_name}'),
+                                StringStruct(u'ProductVersion', u'{version_info.get("product_version", "1.0.0.0")}')
+                            ])
+                        ]),
+                        VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+                    ]
+                )
+                ''')
                 version_file = os.path.join(output_dir, 'version.txt')
                 with open(version_file, 'w', encoding='utf-8-sig', newline='\n') as f:
                     f.write(content)
@@ -9926,7 +10029,7 @@ class PackageMainWindow(QMainWindow):
              exclude_list = self.exclude_list.copy()
              self.safe_log(f"🚫 自动排除已启用，排除 {len(exclude_list)} 个包")
         else:
-            exclude_list = self.manual_exclude_list.copy()  # 仅用户手动添加
+            exclude_list = self.manual_exclude_list.copy()  
             self.safe_log(f"🚫 自动排除已禁用，仅手动排除 {len(exclude_list)} 个包")
         self.safe_log(f"📦 最终隐藏导入: {len(final_hidden_imports)} 个")
         # ===== PyInstaller spec 模式 =====
@@ -9956,43 +10059,69 @@ class PackageMainWindow(QMainWindow):
                 has_version = True
             else:
                 has_version = False
-            # spec 模式需要 pathex 指向虚拟环境
+            # 初始化默认值（防止条件不满足时变量未定义）
             pathex_list = []
-            # 如果是虚拟环境，添加虚拟环境的 site-packages 路径
-            if self.use_venv and venv_site_packages:
-                pathex_list.append(normalize_path(venv_site_packages))
-                # ===== 构建 datas_list =====
+            binaries_list = []
+            if not 'datas_list' in locals():
                 datas_list = []
+            final_hidden_imports = set(self.hidden_imports_list)
+            if self.use_venv and venv_site_packages and os.path.exists(venv_site_packages):
+                # 清空并重新填充（因为前面可能有 version_file 添加到 datas_list）
+                pathex_list = []
+                binaries_list = []
+                pathex_list.append(get_short_path(normalize_path(venv_site_packages)))
+                # 补全虚拟环境的 DLLs 和 Lib（PyInstaller 分析时需要）
+                if self.use_venv and target_python:
+                    venv_dir = os.path.dirname(os.path.dirname(target_python))
+                    for subdir in ['DLLs', 'Lib']:
+                        p = os.path.join(venv_dir, subdir)
+                        if os.path.exists(p):
+                            pathex_list.append(get_short_path(normalize_path(p)))
+                # ===== 1. 补全 pywin32 =====
+                final_hidden_imports = set(self.hidden_imports_list)
+                win32_keywords = {'win32api', 'win32con', 'win32gui', 'win32com', 'pywin32'}
+                # 检查是否命中（包括用户已有的隐藏导入）
+                has_win32 = any(imp.lower() in win32_keywords for imp in final_hidden_imports)
+                if has_win32:
+                    extra_hidden = ['pywin32', 'pythoncom', 'pywintypes']
+                    for mod in extra_hidden:
+                        if mod not in final_hidden_imports:
+                            final_hidden_imports.add(mod)
+                    self.hidden_imports_list = list(final_hidden_imports)
+                # ===== 2. 构建 binaries 和 datas（使用更新后的 self.hidden_imports_list） =====
                 for src, dst in self.data_files_list:
                     if src not in getattr(self, 'exclude_from_pack', []):
-                        datas_list.append((normalize_path(src), dst))
-                if sys.platform == 'win32' and self.use_venv and venv_site_packages:                
+                        datas_list.append((get_short_path(normalize_path(src)), dst))
+                # ===== 3. pywin32 特殊处理 =====
+                if sys.platform == 'win32' and self.use_venv and venv_site_packages:
                     win32_imports = [imp for imp in self.hidden_imports_list
                                      if imp.lower().startswith('win32') or imp.lower() == 'pywin32']
                     if win32_imports:
-                        # 1. pywin32_system32 基础 dll
+                        # pywin32_system32/*.dll -> binaries
                         system32_dir = os.path.join(venv_site_packages, 'pywin32_system32')
                         if os.path.exists(system32_dir):
                             for f in os.listdir(system32_dir):
                                 if f.endswith('.dll'):
                                     src = os.path.join(system32_dir, f)
-                                    if not any(src == s for s, _ in datas_list):
-                                        datas_list.append((src, 'pywin32_system32'))               
-                        # 2. win32 目录下只添加被导入的模块对应的 .pyd
+                                    if not any(src == s for s, _ in binaries_list):
+                                        binaries_list.append((get_short_path(src), 'pywin32_system32'))
+                        # win32 目录：.pyd -> binaries，.py -> datas
                         win32_dir = os.path.join(venv_site_packages, 'win32')
                         if os.path.exists(win32_dir):
-                            needed = set()
+                            needed_pyd = set()
+                            needed_py = set()
                             for imp in win32_imports:
-                                if imp.lower() != 'pywin32':  
-                                    needed.add(imp.lower() + '.pyd')
-                                if imp.lower() == 'win32api':
-                                    needed.add('win32api.pyd') 
+                                if imp.lower() != 'pywin32':
+                                    needed_pyd.add(imp.lower() + '.pyd')
+                                    needed_py.add(imp.lower() + '.py')
                             for f in os.listdir(win32_dir):
-                                if f.endswith('.pyd') and f.lower() in needed:
-                                    src = os.path.join(win32_dir, f)
+                                src = os.path.join(win32_dir, f)
+                                if f.endswith('.pyd') and f.lower() in needed_pyd:
+                                    if not any(src == s for s, _ in binaries_list):
+                                        binaries_list.append((src, 'win32'))
+                                elif f.endswith('.py') and f.lower() in needed_py:
                                     if not any(src == s for s, _ in datas_list):
                                         datas_list.append((src, 'win32'))
-                                       
             upx_flags_str = ''
             compress_level = self.compress_combo.currentText()
             if compress_level != '不压':
@@ -10012,7 +10141,7 @@ class PackageMainWindow(QMainWindow):
                 "a = Analysis(",
                 f"    ['{script_path}'],",
                 f"    pathex={pathex_list},",
-                "    binaries=[],",
+                f"    binaries={binaries_list},",
                 f"    datas={datas_list},",
                 f"    hiddenimports={list(final_hidden_imports)},",
                 "    hookspath=[],",
@@ -10080,7 +10209,7 @@ class PackageMainWindow(QMainWindow):
                 'upx_path': self.upx_path.text(),
                 'extra_args': extra_args.split() if extra_args else [],
                 'target_python': target_python,
-                'venv_python': target_python if self.use_venv else None,
+                'venv_python': target_python if self.use_venv else None,  # target_python 已经是 common_venv 的路径
                 'use_venv': self.use_venv,
                 'venv_site_packages': venv_site_packages,
                 'data_files': filtered_data_files,
@@ -10140,7 +10269,6 @@ class PackageMainWindow(QMainWindow):
                     if not path or sys.platform != 'win32':
                         return path
                     try:
-                        import ctypes
                         dir_path = os.path.dirname(path)
                         filename = os.path.basename(path)
                         if not dir_path or not os.path.exists(dir_path):
@@ -10266,10 +10394,13 @@ class PackageMainWindow(QMainWindow):
             'response_file': response_file,
             'version_file': version_file,
             'version_info': version_info,
+            'backend': self.nuitka_backend_combo.currentText() if hasattr(self, 'nuitka_backend_combo') else 'auto',
         }
         if packer == 'Nuitka':
             jobs = self.nuitka_jobs_combo.currentText() if self.nuitka_jobs_combo else 'auto'
             max_jobs = max(1, self.cpu_count)
+            # Fixed: cap zig parallel jobs to 4 for memory safety
+            max_jobs = min(max_jobs, 4)
             if jobs != 'auto':
                 try:
                     job_num = int(jobs)
@@ -10282,10 +10413,9 @@ class PackageMainWindow(QMainWindow):
             else:
                 final_jobs = str(max_jobs)
                 self.safe_log(f"🔧 使用 {max_jobs}/{self.cpu_count} 个核心并行编译")
-            low_memory = self.nuitka_lowmem_cb.isChecked() if self.nuitka_lowmem_cb else False
-            if not low_memory and self.cpu_count >= 8:
-                low_memory = True
-                self.safe_log(f"🧠 自动启用低内存模式 (CPU: {self.cpu_count}核)")
+            # Fixed: force low memory mode (onefile zstd level22 OOM protection)
+            low_memory = True
+            self.safe_log(f"🧠 自动启用低内存模式 (CPU: {self.cpu_count}核)")
             if low_memory:
                 self.safe_log(f"🧠 低内存模式已启用")
             optimize = self.nuitka_optimize_combo.currentText() if hasattr(self, 'nuitka_optimize_combo') else "平衡"
@@ -10336,10 +10466,6 @@ class PackageMainWindow(QMainWindow):
                     self.safe_log(f"⚠️ 读取编译器缓存失败: {e}")
             if not has_mingw and not has_msvc:
                 threading.Thread(target=self._detect_compilers_async, daemon=True).start()
-            #if backend in ['MinGW64', 'auto'] and has_mingw:
-                #self.safe_log(f"🔧 使用 MinGW64: {mingw_path}")
-            #elif backend in ['MSVC', 'auto'] and has_msvc:
-                #self.safe_log(f"🔧 使用 MSVC: {msvc_path}")
             config.update({
                 'jobs': final_jobs,
                 'backend': backend,
@@ -10382,14 +10508,15 @@ class PackageMainWindow(QMainWindow):
 
     def _get_packer_display_name(self, packer):
         """统一打包器显示名称"""
-        return "PyInstaller" if packer.startswith("PyInstaller") else packer
+        if packer in ["PyInstaller-spec", "PyInstaller-cmd"]:
+            return "PyInstaller"
+        return packer
 
     def _check_packer_version(self, packer, python_exe):
         """同步检测单个打包器版本，返回版本字符串或None"""
         if not python_exe or not os.path.exists(python_exe):
             return None
         display = self._get_packer_display_name(packer)
-        # ===== 打包器pip名称映射（pip show用，注意大小写）=====
         pip_map = {
             "PyInstaller": "pyinstaller",
             "Nuitka": "nuitka",
@@ -10403,7 +10530,7 @@ class PackageMainWindow(QMainWindow):
         pip_name = pip_map.get(display)
         if not pip_name:
             return None
-        # ===== 方法1: pip show=====
+        # 方法1: pip show
         try:
             r = self._run_hidden(
                 [python_exe, "-m", "pip", "show", pip_name],
@@ -10414,10 +10541,12 @@ class PackageMainWindow(QMainWindow):
                 for line in r.stdout.split("\n"):
                     if line.startswith("Version:"):
                         version = line.split(":", 1)[1].strip()
-                        return version
+                        # 只包含数字和点，才是版本号
+                        if all(c.isdigit() or c == '.' for c in version):
+                            return version
         except Exception:
             pass
-        # ===== 方法2: python -m 模块 --version =====
+        # 方法2: python -m 模块 --version
         module_map = {
             "PyInstaller": "pyinstaller",
             "Nuitka": "nuitka",
@@ -10426,7 +10555,6 @@ class PackageMainWindow(QMainWindow):
             "Py2app": "py2app",
             "Py2exe": "py2exe",
             "PyOxidizer": "pyoxidizer",
-            "Py2app": "py2app",
         }
         mod = module_map.get(display)
         if mod:
@@ -10438,20 +10566,22 @@ class PackageMainWindow(QMainWindow):
                 )
                 out = (r.stdout or r.stderr or "").strip()
                 if out:
+                    # 提取版本号：只取数字和点组成的部分
                     import re
                     match = re.search(r'(\d+\.\d+\.\d+(?:\.\d+)?)', out)
                     if match:
-                        return match.group(1)
-                    parts = out.split()
-                    for part in parts:
-                        if re.match(r'^\d+\.\d+', part):
+                        version = match.group(1)
+                        if all(c.isdigit() or c == '.' for c in version):
+                            return version
+                    # 尝试找第一个由数字和点组成的
+                    for part in out.split():
+                        if all(c.isdigit() or c == '.' for c in part):
                             return part
             except Exception:
                 pass
-        # ===== 方法3: 直接命令 --version（PyOxidizer、PyApp等）=====
+        # 方法3: 直接命令
         if display in ("PyOxidizer", "PyApp"):
             cmd = display.lower()
-            import shutil
             if shutil.which(cmd):
                 try:
                     r = self._run_hidden(
@@ -10459,13 +10589,76 @@ class PackageMainWindow(QMainWindow):
                         capture_output=True, text=True, timeout=5
                     )
                     out = (r.stdout or r.stderr or "").strip()
-                    import re
-                    match = re.search(r'(\d+\.\d+\.\d+(?:\.\d+)?)', out)
-                    if match:
-                        return match.group(1)
+                    if out:
+                        match = re.search(r'(\d+\.\d+\.\d+(?:\.\d+)?)', out)
+                        if match:
+                            version = match.group(1)
+                            if all(c.isdigit() or c == '.' for c in version):
+                                return version
                 except Exception:
                     pass
         return None
+
+    def _init_async_packer_detection(self):
+        """启动后后台异步检测所有环境的打包器版本（不阻塞UI）"""
+
+        def detect_all():
+            try:
+                # 获取当前Python路径列表
+                python_paths = []
+                for i in range(self.python_path.count()):
+                    p = self.python_path.itemText(i)
+                    if p and os.path.exists(p):
+                        python_paths.append(p)
+                if not python_paths:
+                    return
+                packers = ["PyInstaller", "Nuitka", "PyApp", "Py2exe", "Cx_Freeze", "Pynsist", "PyOxidizer", "Py2app"]
+                # 读取现有缓存
+                try:
+                    with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
+                        cache_data = json.load(f)
+                except:
+                    cache_data = {}
+                if 'packer_versions' not in cache_data:
+                    cache_data['packer_versions'] = {}
+                updated = False
+                for python_exe in python_paths:
+                    for packer in packers:
+                        cache_key = f"{packer}@{python_exe}"
+                        # 检查缓存是否已存在且有效
+                        existing = cache_data['packer_versions'].get(cache_key)
+                        is_valid = False
+                        if existing and isinstance(existing, str):
+                            if not ('\\' in existing or '/' in existing or '.exe' in existing or len(existing) > 30):
+                                if existing and existing[0].isdigit():
+                                    is_valid = True
+                        if not is_valid:
+                            version = self._check_packer_version(packer, python_exe)
+                            if version:
+                                cache_data['packer_versions'][cache_key] = version
+                                updated = True
+                            else:
+                                cache_data['packer_versions'].pop(cache_key, None)
+                                updated = True
+                if updated:
+                    with open(self.global_cache_file, 'w', encoding='utf-8-sig') as f:
+                        json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                    # 更新内存缓存
+                    self._packer_versions_cache = cache_data['packer_versions']
+                    self._packer_versions_detected = True
+                    self._packer_cache_loaded = True
+                    # 更新UI显示
+                    current = self.packer_combo.currentText()
+                    display = self._get_packer_display_name(current)
+                    python_exe = self.python_path.currentText()
+                    if python_exe:
+                        cache_key = f"{display}@{python_exe}"
+                        version = cache_data['packer_versions'].get(cache_key)
+                        if version:
+                            self._update_packer_status(display, version)
+            except Exception as e:
+                self.safe_log(f"⚠️ 后台检测打包器失败: {e}")
+        threading.Thread(target=detect_all, daemon=True).start()
 
     def _check_current_packer(self):
         """检测当前选中的打包器版本（完全异步，不阻塞UI）"""
@@ -10477,50 +10670,23 @@ class PackageMainWindow(QMainWindow):
         packer = self.packer_combo.currentText()
         self._display_packer_version_from_cache(packer)
 
-    def _show_packer_from_cache(self):
-        """从缓存显示当前打包器版本（启动时快速显示）"""
-        python_exe = self.python_path.currentText()
-        if not python_exe or not os.path.exists(python_exe):
-            # Python路径还没加载，显示等待状态
-            self.status_packer.setText("📦 等待Python...")
-            self.status_packer.setStyleSheet("color: orange;")
-            return
-        packer = self.packer_combo.currentText()
-        display = self._get_packer_display_name(packer)
-        cache_key = f"{display}@{python_exe}"
-        # 先查内存缓存
-        version = self._packer_version_cache.get(cache_key)
-        # 内存没有，查文件缓存
-        if version is None:
-            try:
-                if os.path.exists(self.global_cache_file):
-                    with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
-                        cache_data = json.load(f)
-                    packer_versions = cache_data.get('packer_versions', {})
-                    version = packer_versions.get(cache_key)
-                    if version:
-                        # 加载到内存缓存
-                        self._packer_version_cache[cache_key] = version
-            except:
-                pass
-        if version:
-            self._update_packer_status(display, version)
-        else:
-            # 缓存中没有，显示检测中，触发后台检测
-            self.status_packer.setText(f"📦 {display}: 检测中...")
-            self.status_packer.setStyleSheet("color: orange;")
-            self._check_current_packer()
-
     def _update_packer_status(self, display, version):
-        """统一更新打包器状态栏（线程安全，通过信号调用）"""
+        """统一更新打包器状态栏"""
         if version and str(version).strip():
-            self.status_packer.setText(f"📦 {display}: {version}")
-            self.status_packer.setStyleSheet("color: green;")
-            if display == "Nuitka":
-                self._auto_set_nuitka_compat(version)
-        else:
-            self.status_packer.setText(f"📦 {display}: 未安装")
-            self.status_packer.setStyleSheet("color: red;")
+            is_valid = True
+            if isinstance(version, str):
+                if '\\' in version or '/' in version or '.exe' in version or len(version) > 30:
+                    is_valid = False
+                elif version and not version[0].isdigit():
+                    is_valid = False
+            if is_valid:
+                self.status_packer.setText(f"📦 {display}: {version}")
+                self.status_packer.setStyleSheet("color: green;")
+                if display == "Nuitka":
+                    self._auto_set_nuitka_compat(version)
+                return
+        self.status_packer.setText(f"📦 {display}: 未安装")
+        self.status_packer.setStyleSheet("color: red;")
 
     def _check_current_packer_after_init(self):
         """初始化完成后检测当前打包器版本（延迟异步执行）"""
@@ -10603,7 +10769,6 @@ class PackageMainWindow(QMainWindow):
 
     def _on_spec_build_finished(self, success, msg):
         """spec打包完成后的回调"""
-        import subprocess
         # 清理build目录
         if hasattr(self, '_spec_build_dir') and os.path.exists(self._spec_build_dir):
             try:
@@ -10625,85 +10790,6 @@ class PackageMainWindow(QMainWindow):
                 self.safe_log(f"⚠️ 恢复源码出错: {e}")
             finally:
                 self._injected_this_build = False       
-
-    def _update_custom_progress(self):
-        """模拟进度条递增"""
-        if self.custom_progress_value < 90:
-            self.custom_progress_value += 5
-            self.progress_bar.setValue(self.custom_progress_value)
-            self.progress_label.setText(f"{self.custom_progress_value}% - 打包中...")
-            QApplication.processEvents()
-
-    def _hide_custom_progress(self):
-        """隐藏进度条"""
-        self.progress_container.setVisible(False)
-
-        def _generate_text_icon(self):
-            """文字生成图标"""
-            try:
-                from PIL import Image, ImageDraw, ImageFont
-                text = self.text_input.text() or "App"
-                size = (256, 256)
-                # 获取颜色
-                bg_color = self._get_color_from_btn(self.bg_color_btn)
-                text_color = self._get_color_from_btn(self.text_color_btn)
-                img = Image.new('RGBA', size, bg_color)
-                draw = ImageDraw.Draw(img)
-                try:
-                    # 尝试加载系统字体
-                    font = ImageFont.truetype("arial.ttf", 120)
-                except:
-                    # 降级使用默认字体
-                    font = ImageFont.load_default()
-                # 计算文字位置居中
-                bbox = draw.textbbox((0, 0), text, font=font)
-                x = (size[0] - (bbox[2] - bbox[0])) // 2
-                y = (size[1] - (bbox[3] - bbox[1])) // 2
-                draw.text((x, y), text, fill=text_color, font=font)
-                self._save_icon(img)
-            except ImportError:
-                QMessageBox.warning(self, "错误", "需要安装 Pillow: pip install Pillow")
-            except Exception as e:
-                QMessageBox.critical(self, "错误", str(e))
-
-        def _adjust_function_indent(self, func_name, offset):
-            """调整单个函数的缩进"""
-            if not func_name:
-                QMessageBox.warning(self, "提示", "请输入函数名")
-                return False
-            script_path = self.input_file.text()
-            if not script_path or not os.path.exists(script_path):
-                #QMessageBox.warning(self, "提示", "请先选择Python脚本")
-                return False
-            try:
-                with open(script_path, 'r', encoding='utf-8-sig') as f:
-                    lines = f.readlines()
-                # 备份
-                backup = os.path.splitext(script_path)[0] + '.bak.py'
-                if not os.path.exists(backup_path):
-                    with open(backup_path, 'w', encoding='utf-8-sig') as f:
-                        f.writelines(lines)
-                # 查找函数
-                range_info = self._find_function_range(lines, func_name)
-                if not range_info:
-                    QMessageBox.warning(self, "提示", f"未找到函数 '{func_name}'")
-                    return False
-                start, end = range_info
-                new_lines = lines[:]
-                for i in range(start, end + 1):
-                    if lines[i].strip():
-                        current_indent = len(lines[i]) - len(lines[i].lstrip())
-                        new_indent = max(0, current_indent + offset)
-                        new_lines[i] = ' ' * new_indent + lines[i].lstrip()
-                with open(script_path, 'w', encoding='utf-8-sig') as f:
-                    f.writelines(new_lines)
-                self.safe_log(f"✅ 已调整函数 '{func_name}' 缩进 {offset:+d} 个空格")
-                show_msg(self, "完成", f"已调整函数 '{func_name}' 缩进 {offset:+d} 个空格",1)
-                return True
-            except Exception as e:
-                self.safe_log(f"❌ 缩进调整失败: {e}")
-                QMessageBox.critical(self, "错误", f"调整失败: {e}")
-                return False
 
     def _reset_build_button(self):
         """重置打包按钮状态"""
@@ -10748,7 +10834,6 @@ class PackageMainWindow(QMainWindow):
         self.time_label.setStyleSheet("font-weight: bold; color: #2ecc71; font-size: 12px;")
         QApplication.processEvents()
         self.time_timer.start(1000)
-        # ========== 确保这里启动了打包 ==========
         self._run_build()
 
     def _run_custom_packager(self, packer, script, output_path, proj_name):
@@ -10797,12 +10882,7 @@ class PackageMainWindow(QMainWindow):
             self.safe_log("❌ 打包失败")
 
     def _kill_worker(self):
-        """【修复】彻底终止正在运行的打包 worker 及其子进程树
-        根因：原 _stop_build 只重置按钮，未杀掉后台 PyInstaller 子进程。
-        用户点\"停止\"后旧进程仍在跑；再点\"开始\"会起新进程，
-        多个 PyInstaller 共享同一 --workpath + --clean，互相 rmtree
-        导致 base_library.zip 目录被删、FileNotFoundError。
-        """
+        """彻底终止正在运行的打包 worker 及其子进程树"""
         worker = getattr(self, 'worker', None)
         if worker is None:
             return
@@ -10870,22 +10950,9 @@ class PackageMainWindow(QMainWindow):
             self._restore_original_script()
             self._injected_this_build = False     
 
-    def _build_finished(self):
-        """打包完成回调"""
-        self.btn_build.setText("▶ 开始打包")
-        self.btn_build.setStyleSheet("")
-        self.progress_container.setVisible(False)
-        # ===== 恢复源码（仅当本次注入了代码） =====
-        if self._injected_this_build:
-            self._restore_original_script()
-            self._injected_this_build = False
-
     def _update_drop_highlight(self):
         """计算 r1-r4 的实际位置"""
         central = self.centralWidget()
-        # r1 的顶部 = contents margin top = 8
-        # r4 的底部 = r1.y + r1.height + spacing + r2.height + spacing + r3.height + spacing + r4.height
-        # 更简单：用 mapTo 算
         y1 = self.input_file.mapTo(central, self.input_file.rect().topLeft()).y() - 6  # 留边距
         y4 = self.python_path.mapTo(central, self.python_path.rect().bottomRight()).y() + 6
         self.drop_highlight.setGeometry(4, y1, central.width() - 8, y4 - y1)
@@ -10912,7 +10979,7 @@ class PackageMainWindow(QMainWindow):
                 self.input_file.setText(path)
                 base = os.path.splitext(os.path.basename(path))[0]
                 self.app_name.setText(base)
-                # ===== 【修复】清空所有列表（包括排除列表） =====
+                # ===== 清空所有列表（包括排除列表） =====
                 self.hidden_imports_list.clear()
                 self.hidden_listbox.clear()
                 self.exclude_list.clear()
@@ -11066,7 +11133,15 @@ class PackageMainWindow(QMainWindow):
             if idx >= 0:
                 self.nuitka_jobs_combo.setCurrentIndex(idx)
         self.nuitka_backend_combo = QComboBox()
-        self.nuitka_backend_combo.addItems(["auto", "MinGW64", "MSVC"])
+        self.nuitka_backend_combo.addItems(["auto", "MinGW64", "MSVC","zig", "clang"])
+        self.nuitka_backend_combo.setToolTip(
+            "选择 Nuitka 的编译后端/编译器\n"
+            "auto: 自动检测\n"
+            "MinGW64: 使用 MinGW64 (GCC)\n"
+            "MSVC: 使用 Visual C++\n"
+            "zig: 使用 Zig 编译器\n"
+            "clang: 使用 Clang 编译器"
+        )
         self.backend_display_label = QLabel("")
         self.backend_display_label.setStyleSheet("color: #666; font-size: 9px;")
         self.nuitka_backend_combo.currentTextChanged.connect(self._update_backend_display)
@@ -11175,16 +11250,6 @@ class PackageMainWindow(QMainWindow):
             self.gui_display_label.setText(f"✅ {text}")
             self.gui_display_label.setStyleSheet("color: #2196F3; font-size: 9px;")
 
-    def _on_gui_plugin_changed(self, text):
-        """GUI插件选择变化处理"""
-        if text == "auto":
-            self.gui_display_label.setText("⏳ 检测中...")
-            self.gui_display_label.setStyleSheet("color: orange; font-size: 9px;")
-            QTimer.singleShot(50, self._update_gui_display_from_hidden)
-        else:
-            self.gui_display_label.setText(f"✅ {text}")
-            self.gui_display_label.setStyleSheet("color: #2196F3; font-size: 9px;")
-
     def _update_backend_display(self, text):
         """更新后端显示"""
         if text == "auto":
@@ -11236,7 +11301,7 @@ class PackageMainWindow(QMainWindow):
         ]
         setup_content = "\n".join(setup_lines)
         setup_path = os.path.join(project_output_dir, "setup.py")
-        with open(setup_path, "w", encoding="utf-8") as f:
+        with open(setup_path, "w", encoding="utf-8-sig") as f:
             f.write(setup_content)
         shutil.copy2(input_file, project_output_dir)
         cmd = [python_cmd, "-u", "setup.py", "py2exe"]
@@ -11303,7 +11368,6 @@ class PackageMainWindow(QMainWindow):
             icon_filename = os.path.basename(icon_file)
             shutil.copy2(icon_file, project_output_dir)
             icon_param = f', icon="{icon_filename}"'
-        # ===== 您原来的 setup.py =====
         setup_lines = [
             "# -*- coding: utf-8 -*-",
             "from cx_Freeze import setup, Executable",
@@ -11332,7 +11396,7 @@ class PackageMainWindow(QMainWindow):
         ]
         setup_content = "\n".join(setup_lines)
         setup_path = os.path.join(project_output_dir, "setup.py")
-        with open(setup_path, "w", encoding="utf-8") as f:
+        with open(setup_path, "w", encoding="utf-8-sig") as f:
             f.write(setup_content)
         shutil.copy2(input_file, project_output_dir)
         if icon_file and os.path.exists(icon_file):
@@ -11363,7 +11427,6 @@ class PackageMainWindow(QMainWindow):
             if success:
                 build_dir = os.path.join(project_output_dir, "build")
                 if os.path.exists(build_dir):
-                    import glob
                     exe_dirs = glob.glob(os.path.join(build_dir, "exe.*"))
                     if exe_dirs:
                         exe_dir = exe_dirs[0]
@@ -11427,8 +11490,6 @@ class PackageMainWindow(QMainWindow):
 
     def _package_pyoxidizer(self, input_file):
         """使用 PyOxidizer 打包"""
-        import shutil
-        import glob
         # ===== 获取 Python 路径 =====
         python_cmd = self.python_path.currentText()
         if not python_cmd or not os.path.exists(python_cmd):
@@ -11581,7 +11642,7 @@ class PackageMainWindow(QMainWindow):
             'register_target("install", make_install, depends=["exe"], default=True)',
             'resolve_targets()',
         ]
-        with open(os.path.join(out_dir, "pyoxidizer.bzl"), "w", encoding="utf-8") as f:
+        with open(os.path.join(out_dir, "pyoxidizer.bzl"), "w", encoding="utf-8-sig") as f:
             f.write("\n".join(bzl_lines))
         # ===== 复制源文件 =====
         module_dir = os.path.join(out_dir, module_name)
@@ -11616,13 +11677,11 @@ class PackageMainWindow(QMainWindow):
             env["RUSTC"] = rustc_bin
             env["RUSTUP_TOOLCHAIN"] = "stable"
             env["PYOXIDIZER_SYSTEM_RUST"] = "1"
-        # ===== 关键修复：先运行 pyoxidizer 生成 Cargo.toml，然后修补 edition 字段 =====
+        # ===== 先运行 pyoxidizer 生成 Cargo.toml，然后修补 edition 字段 =====
         self.safe_log("🚀 开始 PyOxidizer 编译（后台运行）...")
         self.progress_bar.setValue(25)
         self.progress_label.setText("25% - 生成项目文件...")
         QApplication.processEvents()
-        # 先执行 pyoxidizer build 生成项目文件（可能会失败，但我们只关心生成的文件）
-        # 或者使用 pyoxidizer generate 来生成项目文件
         try:
             # 尝试生成项目文件
             gen_cmd = [pyoxidizer, "generate", "--path", out_dir]
@@ -11682,14 +11741,9 @@ class PackageMainWindow(QMainWindow):
                 content = f.read()
             original = content
             # 修复各种 edition 格式问题
-            # 1. edition = 2018 (数字) -> edition = "2018" (字符串)
             import re
-            # 匹配 edition = 2018 或 edition = 2021 (没有引号的数字)
             content = re.sub(r'edition\s*=\s*(\d{4})\s*$', r'edition = "\1"', content, flags=re.MULTILINE)
-            # 匹配 edition = 2018 (行内，后面有逗号)
             content = re.sub(r'edition\s*=\s*(\d{4})\s*,', r'edition = "\1",', content)
-            # 匹配 edition = { workspace = true } 等复杂情况（如果存在）
-            # 确保 edition 是字符串或有效的继承格式
             if content != original:
                 with open(cargo_toml_path, 'w', encoding='utf-8-sig') as f:
                     f.write(content)
@@ -11735,59 +11789,7 @@ class PackageMainWindow(QMainWindow):
         self.btn_build.setStyleSheet("")
         self.is_building = False
         self.pyoxidizer_worker = None
-        # 强制刷新
         QApplication.processEvents()
-
-    def clean_pyapp_build(self, pyapp_src_dir: str = None) -> None:
-        """清理 pyapp_src 的编译缓存，保留源码和配置"""
-        if pyapp_src_dir is None:
-            pyapp_src_dir = os.path.join(self.current_dir, "tools", "pyapp_src")
-        project = Path(pyapp_src_dir).resolve()
-        # 删除 target 目录（兼容 Windows 文件锁定）
-        target = project / "target"
-        if target.exists():
-            def _handle_remove(func, path, exc_info):
-                """解除只读属性后重试删除"""
-                try:
-                    os.chmod(path, stat.S_IWRITE)
-                    func(path)
-                except Exception:
-                    pass
-            deleted = False
-            for i in range(3):
-                try:
-                    # Python 3.12+ 用 onexc，旧版用 onerror
-                    if sys.version_info >= (3, 12):
-                        shutil.rmtree(target, onexc=_handle_remove)
-                    else:
-                        shutil.rmtree(target, onerror=_handle_remove)
-                    deleted = True
-                    break
-                except Exception:
-                    time.sleep(0.5)
-            if deleted:
-                self.safe_log("🧹 已清理编译缓存: target/")
-            else:
-                # Windows 终极方案：rd /s /q
-                if os.name == 'nt':
-                    os.system(f'rd /s /q "{target}" 2>nul')
-                    self.safe_log("🧹 已强制清理编译缓存: target/")
-                else:
-                    self.safe_log("⚠️ 清理编译缓存失败（可能被占用）")
-        # 删除 Cargo.lock
-        lock = project / "Cargo.lock"
-        if lock.exists():
-            try:
-                lock.unlink()
-                self.safe_log("🧹 已清理: Cargo.lock")
-            except Exception as e:
-                self.safe_log(f"⚠️ 清理 Cargo.lock 失败: {e}")
-
-    def _read_cargo_output(self):
-        data = self.cargo_process.readAllStandardOutput()
-        line = bytes(data).decode('utf-8', errors='replace').strip()
-        if line:
-            self.safe_log(line)
 
     def _package_pyapp(self, input_file):
         """使用 PyApp 打包"""
@@ -11884,7 +11886,7 @@ class PackageMainWindow(QMainWindow):
                 if not line_bytes:
                     break
                 try:
-                    line = line_bytes.decode('utf-8', errors='replace').rstrip()
+                    line = line_bytes.decode('utf-8-sig', errors='replace').rstrip()
                 except:
                     line = str(line_bytes)
                 if line:
@@ -11918,37 +11920,6 @@ class PackageMainWindow(QMainWindow):
             if build_temp and os.path.exists(build_temp):
                 shutil.rmtree(build_temp, ignore_errors=True)
                 self.safe_log("🧹 已清理临时目录: build_temp")
-
-    def _install_pyinstaller(self):
-        """安装 PyInstaller"""
-        python_cmd = self.python_path.currentText()
-        if not python_cmd or not os.path.exists(python_cmd):
-            python_cmd = sys.executable
-        try:
-            self.safe_log("📦 正在安装 PyInstaller...")
-            process = self._popen_hidden(
-                [python_cmd, '-m', 'pip', 'install', 'pyinstaller', '-i', MIRROR],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                encoding='utf-8',
-                errors='replace',
-                startupinfo=get_startupinfo()
-            )
-            for line in process.stdout:
-                if line.strip():
-                    self.safe_log(f"  {line.strip()}")
-            process.wait()
-            if process.returncode == 0:
-                self.safe_log("✅ PyInstaller 安装成功")
-                return True
-            else:
-                self.safe_log("❌ PyInstaller 安装失败")
-                return False
-        except Exception as e:
-            self.safe_log(f"❌ 安装异常: {e}")
-            return False
 
     def _build_wheel_for_project(self, project_dir, out_name):
         """为项目生成 Wheel 包"""
@@ -12001,15 +11972,16 @@ class PackageMainWindow(QMainWindow):
             content = f.read()
         # 如果没有 main() 函数，自动添加
         if 'def main()' not in content and 'def main(' not in content:
-            content += f'''
-    def main():
-        """程序入口"""
-        print("{original_module_name} 启动")
-        if 'run' in globals():
-            run()
-        elif 'start' in globals():
-            start()
-    '''
+            main_func = textwrap.dedent(f'''
+            def main():
+                """程序入口"""
+                print("{original_module_name} 启动")
+                if 'run' in globals():
+                    run()
+                elif 'start' in globals():
+                    start()
+            ''')
+            content += main_func
             self.safe_log("✅ 已添加 main() 函数")
         # 保存为新的模块名
         with open(os.path.join(build_dir, f"{module_name}.py"), 'w', encoding='utf-8-sig') as f:
@@ -12030,11 +12002,11 @@ class PackageMainWindow(QMainWindow):
             'requires-python = ">=3.8"',
             "",
             "[project.scripts]",
-            f'{clean_name} = "{module_name}:main"',  # 使用新的 module_name
+            f'{clean_name} = "{module_name}:main"', 
             "",
             "[tool.setuptools]",
             "packages = []",
-            f'py-modules = ["{module_name}"]',  # 使用新的 module_name
+            f'py-modules = ["{module_name}"]',  
         ]
         content = "\n".join(toml_lines)
         pyproject_path = os.path.join(build_dir, "pyproject.toml")
@@ -12141,7 +12113,7 @@ class PackageMainWindow(QMainWindow):
             shutil.copy2(icon_file, project_output_dir)
         cfg_content = "\n".join(cfg_lines)
         cfg_path = os.path.join(project_output_dir, "installer.cfg")
-        with open(cfg_path, "w", encoding="utf-8") as f:
+        with open(cfg_path, "w", encoding="utf-8-sig") as f:
             f.write(cfg_content)
         self.progress_bar.setValue(15)
         self.progress_label.setText("15% - 配置文件已生成")
@@ -12199,7 +12171,7 @@ class PackageMainWindow(QMainWindow):
             QApplication.processEvents()
             nsi_file = os.path.join(project_output_dir, "build", "installer.nsi")
             if os.path.exists(nsi_file):
-                with open(nsi_file, "r", encoding="utf-8") as f:
+                with open(nsi_file, "r", encoding="utf-8-sig") as f:
                     nsi_content = f.read()
                 launch_ext = ".launch.py" if self.debug_mode.isChecked() else ".launch.pyw"
                 launch_file = f"{output_name}{launch_ext}"
@@ -12220,7 +12192,7 @@ class PackageMainWindow(QMainWindow):
                 else:
                     nsi_content = nsi_content.replace("SectionEnd", f"{shortcut_code}SectionEnd")
                     self.safe_log(f"✅ 已添加桌面快捷方式，指向: {launch_file}")
-                with open(nsi_file, "w", encoding="utf-8") as f:
+                with open(nsi_file, "w", encoding="utf-8-sig") as f:
                     f.write(nsi_content)
                 self.progress_bar.setValue(60)
                 self.progress_label.setText("60% - 已添加快捷方式")
@@ -12258,7 +12230,6 @@ class PackageMainWindow(QMainWindow):
                             shutil.copy2(setup_exe, os.path.join(project_output_dir, f"{output_name}_Setup.exe"))
                             self.safe_log(f"📦 安装程序大小: {os.path.getsize(setup_exe) / (1024 * 1024):.2f} MB")
                         else:
-                            import glob
                             setup_files = glob.glob(os.path.join(project_output_dir, "build", "**", "*_Setup.exe"),
                                                     recursive=True)
                             if setup_files:
@@ -12329,7 +12300,7 @@ class PackageMainWindow(QMainWindow):
         ]
         setup_content = "\n".join(setup_lines)
         setup_path = os.path.join(project_output_dir, "setup.py")
-        with open(setup_path, "w", encoding="utf-8") as f:
+        with open(setup_path, "w", encoding="utf-8-sig") as f:
             f.write(setup_content)
         shutil.copy2(input_file, project_output_dir)
         cmd = [python_cmd, "setup.py", "py2app"]
@@ -12454,49 +12425,10 @@ class PackageMainWindow(QMainWindow):
         if hasattr(self, 'packer_opt_row'):
             self.packer_opt_row.setVisible(show)
 
-    def _install_packer_async(self, python_exe, packer_name):
-        """后台安装打包器"""
-        try:
-            self.safe_log(f"📦 正在安装 {packer_name} ...")
-            success, result = pip_install(python_exe, packer_name, quiet=True)
-            if success:
-                self.safe_log(f"✅ {packer_name} 安装成功")
-                self._packer_versions_cache = {}
-                QTimer.singleShot(100, self._detect_all_packer_versions_async)
-            else:
-                self.safe_log(f"❌ {packer_name} 安装失败")
-        except Exception as e:
-            self.safe_log(f"❌ 安装异常: {e}")
-
-    def _on_packer_changed(self, packer):
-        """切换打包器 """
-        self._clear_log()
-        python_exe = self.python_path.currentText()
-        if python_exe and os.path.exists(python_exe):
-            packer_name = self._get_packer_display_name(packer)
-            # 检查是否已安装
-            try:
-                result = subprocess.run(
-                    [python_exe, '-m', 'pip', 'show', packer_name.lower()],
-                    capture_output=True, text=True, timeout=5
-                )
-                if result.returncode != 0:
-                    self.safe_log(f"⚠️ {packer_name} 未安装，正在安装...")
-                    # 后台安装
-                    threading.Thread(
-                        target=self._install_packer_async,
-                        args=(python_exe, packer_name.lower()),
-                        daemon=True
-                    ).start()
-            except:
-                pass
-        if packer == "Nuitka":
-            if hasattr(self, 'auto_exclude_cb'):
-                self.auto_exclude_cb.setChecked(False)
-            #script = self.input_file.text()
-            #if script and os.path.exists(script):
-                #self._analyze_used(script, auto_add=False)
-            self.safe_log(
+    def _show_packer_help(self, packer):
+        """显示打包器帮助信息"""
+        helps = {
+            "Nuitka": (
                 "📌 Nuitka 模式：编译为C代码，体积小，启动快，需要C编译器\n"
                 "   安装: pip install -U nuitka\n"
                 "   常用命令: python -m nuitka --standalone --onefile --windows-disable-console your_script.py\n"
@@ -12510,17 +12442,15 @@ class PackageMainWindow(QMainWindow):
                 "     --jobs=4          : 并行编译核心数（建议CPU-1）\n"
                 "     --low-memory      : 低内存模式（8核以上自动启用）\n"
                 "   ⚠️ 需要安装C编译器: MinGW64 或 MSVC"
-            )
-        elif packer == "PyInstaller-spec":
-            self.safe_log(
+            ),
+            "PyInstaller-spec": (
                 "📌 PyInstaller-spec 模式：使用.spec配置文件打包，可定制性强\n"
                 "   安装: pip install pyinstaller\n"
                 "   生成spec: pyi-makespec -F --noconsole your_script.py\n"
                 "   编辑spec后打包: pyinstaller your_script.spec\n"
                 "   优势: 可精确控制打包细节，适合复杂项目"
-            )
-        elif packer == "PyInstaller-cmd":
-            self.safe_log(
+            ),
+            "PyInstaller-cmd": (
                 "📌 PyInstaller-cmd 模式：命令行直接打包，简单快捷\n"
                 "   安装: pip install pyinstaller\n"
                 "   常用命令: pyinstaller -F --noconsole --icon=app.ico your_script.py\n"
@@ -12534,18 +12464,16 @@ class PackageMainWindow(QMainWindow):
                 "     --exclude-module=模块名 : 排除不需要的模块\n"
                 "     --upx-dir=路径    : 启用UPX压缩\n"
                 "     --clean           : 清理临时文件"
-            )
-        elif packer == "PyOxidizer":
-            self.safe_log(
+            ),
+            "PyOxidizer": (
                 "📌 PyOxidizer 模式：嵌入Python解释器，启动快，内存占用低\n"
                 "   安装: pip install pyoxidizer\n"
                 "   或: cargo install pyoxidizer\n"
                 "   常用命令: pyoxidizer build --release\n"
                 "   ⚠️ 需要Rust环境: https://rustup.rs/\n"
                 "   💡 特点: 生成单个exe，启动速度快，适合大型应用"
-            )
-        elif packer == "Pynsist":
-            self.safe_log(
+            ),
+            "Pynsist": (
                 "📌 Pynsist 模式：生成NSIS安装程序，适合分发给终端用户\n"
                 "   安装: pip install pynsist\n"
                 "   配置: 创建 installer.cfg 配置文件\n"
@@ -12553,36 +12481,32 @@ class PackageMainWindow(QMainWindow):
                 "   编译安装程序: makensis installer.nsi\n"
                 "   ⚠️ 需要安装NSIS: https://nsis.sourceforge.io/Download\n"
                 "   💡 特点: 生成专业安装包，支持桌面快捷方式"
-            )
-        elif packer == "Py2exe":
-            self.safe_log(
+            ),
+            "Py2exe": (
                 "📌 Py2exe 模式：经典Windows打包工具，兼容性好\n"
                 "   安装: pip install py2exe\n"
                 "   配置: 创建 setup.py 文件\n"
                 "   打包: python setup.py py2exe\n"
                 "   ⚠️ 仅支持Windows，Python 3.8+ 支持有限\n"
                 "   💡 适合: 老旧项目维护"
-            )
-        elif packer == "Cx_Freeze":
-            self.safe_log(
+            ),
+            "Cx_Freeze": (
                 "📌 Cx_Freeze 模式：跨平台打包工具，支持Windows/Linux/macOS\n"
                 "   安装: pip install cx-freeze\n"
                 "   配置: 创建 setup.py 文件\n"
                 "   打包: python setup.py build_exe\n"
                 "   常用参数: cxfreeze your_script.py --target-dir dist\n"
                 "   💡 特点: 跨平台支持好，配置灵活"
-            )
-        elif packer == "Py2app":
-            self.safe_log(
+            ),
+            "Py2app": (
                 "📌 Py2app 模式：macOS专用打包工具，生成.app应用包\n"
                 "   安装: pip install py2app\n"
                 "   配置: 创建 setup.py 文件\n"
                 "   打包: python setup.py py2app\n"
                 "   ⚠️ 仅支持macOS系统\n"
                 "   💡 适合: macOS应用分发"
-            )
-        elif packer == "PyApp":
-            self.safe_log(
+            ),
+            "PyApp": (
                 "📌 PyApp 模式：Rust编写的Python应用打包工具\n"
                 "   安装: pip install pyapp\n"
                 "   或: cargo install pyapp-cli\n"
@@ -12590,43 +12514,69 @@ class PackageMainWindow(QMainWindow):
                 "   打包: pyapp build --release\n"
                 "   ⚠️ 需要Rust环境: https://rustup.rs/\n"
                 "   💡 特点: 启动速度快，体积小，跨平台"
-            )
+            ),
+        }
+        if packer in helps:
+            self.safe_log(helps[packer])
+
+    def _on_packer_changed(self, packer):
+        """切换打包器 - 检查缓存，无效则触发检测"""
+        self._clear_log()
+        self._show_packer_help(packer)
         self._update_packer_ui(packer)
         show = packer in ["Nuitka", "PyInstaller-spec", "PyInstaller-cmd"]
         if hasattr(self, 'packer_opt_row'):
             self.packer_opt_row.setVisible(show)
-        # ===== 直接从缓存更新UI =====
         self._update_all_backend_ui()
+        python_exe = self.python_path.currentText()
+        if python_exe and os.path.exists(python_exe):
+            display = self._get_packer_display_name(packer)
+            cache_key = f"{display}@{python_exe}"
+            version = self._packer_versions_cache.get(cache_key)
+            if version:
+                self._update_packer_status(display, version)
+            else:
+                self.status_packer.setText(f"📦 {display}: 检测中...")
+                self.status_packer.setStyleSheet("color: orange;")
+                self._detect_single_packer_async(display, python_exe)
 
-    def _update_nsis_status(self):
-        """检测 NSIS 是否可用（Pynsist 需要）- 先读缓存，没有才检测"""
-        # ===== 从缓存读取 =====
-        cache = load_cache()
-        nsis_cache = cache.get('nsis', {})
-        has_nsis = nsis_cache.get('has_nsis', False)
-        nsis_path = nsis_cache.get('nsis_path', '')
-        nsis_version = nsis_cache.get('nsis_version', '')
-        # ===== 有缓存直接使用 =====
-        if has_nsis:
-            self._update_nsis_status_result(has_nsis, nsis_path, nsis_version)
-            return
-        # ===== 没有缓存才检测 =====
-        self.status_compiler.setText("⏳ 检测NSIS...")
-        self.status_compiler.setStyleSheet("color: orange;")
+    def _detect_single_packer_async(self, packer_name, python_exe):
+        """单个打包器异步检测（强制覆盖错误缓存）"""
 
         def detect():
-            has_nsis, nsis_path = self._check_nsis_with_path()
-            nsis_version = self._get_nsis_version(nsis_path) if has_nsis else ""
-            cache = load_cache()
-            cache['nsis'] = {
-                'has_nsis': has_nsis,
-                'nsis_path': nsis_path,
-                'nsis_version': nsis_version,
-            }
-            save_cache(cache)
-            QTimer.singleShot(0, lambda: self._update_nsis_status_result(
-                has_nsis, nsis_path, nsis_version
-            ))
+            try:
+                version = self._check_packer_version(packer_name, python_exe)
+                # 读取缓存
+                try:
+                    with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
+                        cache_data = json.load(f)
+                except:
+                    cache_data = {}
+                if 'packer_versions' not in cache_data:
+                    cache_data['packer_versions'] = {}
+                cache_key = f"{packer_name}@{python_exe}"
+                # ===== 强制覆盖，不管旧缓存是什么 =====
+                if version:
+                    cache_data['packer_versions'][cache_key] = version
+                    self._packer_versions_cache[cache_key] = version
+                    self.safe_log(f"  ✅ {packer_name}: {version}")
+                else:
+                    cache_data['packer_versions'].pop(cache_key, None)
+                    self._packer_versions_cache.pop(cache_key, None)
+                    self.safe_log(f"  ❌ {packer_name}: 未安装")
+                # 写入文件
+                with open(self.global_cache_file, 'w', encoding='utf-8-sig') as f:
+                    json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                # 更新UI
+                if version:
+                    self._update_packer_status(packer_name, version)
+                else:
+                    self.status_packer.setText(f"📦 {packer_name}: 未安装")
+                    self.status_packer.setStyleSheet("color: red;")
+            except Exception as e:
+                self.safe_log(f"❌ 检测 {packer_name} 失败: {e}")
+            finally:
+                self._detecting_packer = False
         threading.Thread(target=detect, daemon=True).start()
 
     def _update_nsis_status_result(self, has_nsis, nsis_path="", nsis_version=""):
@@ -12665,7 +12615,6 @@ class PackageMainWindow(QMainWindow):
 
     def _check_nsis_with_path(self):
         """检测 NSIS 是否可用，并返回路径"""
-        # 1. 检查 makensis.exe 是否在 PATH 中
         makensis_path = shutil.which("makensis.exe")
         if makensis_path and os.path.exists(makensis_path):
             return True, makensis_path
@@ -12689,7 +12638,6 @@ class PackageMainWindow(QMainWindow):
     def _get_nsis_version(self, nsis_path):
         """获取 NSIS 版本号"""
         try:
-            # makensis.exe -version 输出示例: v3.08
             result = self._run_hidden(
                 [nsis_path, "-version"],
                 capture_output=True, text=True, timeout=5,
@@ -12698,7 +12646,6 @@ class PackageMainWindow(QMainWindow):
             output = result.stdout.strip() or result.stderr.strip()
             if output:
                 import re
-                # 匹配 v3.08 或 3.08
                 match = re.search(r'v?(\d+\.\d+)', output)
                 if match:
                     return match.group(1)
@@ -12775,19 +12722,16 @@ class PackageMainWindow(QMainWindow):
             minor = int(version_parts[1]) if len(version_parts) > 1 else 0
             # 4.1 及以上版本需要兼容模式
             should_check = (major > 4 or (major == 4 and minor >= 1))
-            # ===== 检查当前状态 =====
             current_state = self.nuitka_compat_cb.isChecked()
             if should_check:
                 if not current_state:
                     self.nuitka_compat_cb.setChecked(True)
-                    # 只输出一次日志
                     if not self._nuitka_compat_notified:
                         self.safe_log(f"✅ Nuitka {version} 已自动启用兼容模式")
                         self._nuitka_compat_notified = True
             else:
                 if current_state:
                     self.nuitka_compat_cb.setChecked(False)
-                    # 只输出一次日志
                     if not self._nuitka_compat_notified:
                         self.safe_log(f"✅ Nuitka {version} 使用原参数")
                         self._nuitka_compat_notified = True
@@ -12851,13 +12795,6 @@ class PackageMainWindow(QMainWindow):
             """,
         }
         self.setStyleSheet(themes.get(self.themes[self.current_theme_idx], themes["🌞 默认主题"]))
-
-    def _async_init(self):
-        threading.Thread(target=self._async_find_upx, daemon=True).start()
-        threading.Thread(target=self._async_find_python, daemon=True).start()
-        threading.Thread(target=self._async_load_config, daemon=True).start()
-        threading.Thread(target=self._detect_compilers_async, daemon=True).start()
-        threading.Thread(target=self._preload_packer_versions, daemon=True).start()
 
     def _preload_packer_versions(self):
         """启动时预加载所有打包器版本到缓存"""
@@ -12928,28 +12865,13 @@ class PackageMainWindow(QMainWindow):
         else:
             self.safe_log("⚠️ 未找到UPX，请手动指定路径")
 
-    def _set_upx_path(self, path):
-        """在主线程中设置UPX路径（跨平台）"""
-        if path and os.path.exists(path):
-            # 统一将 .EXE 后缀转为 .exe
-            if path.lower().endswith('.exe'):
-                base = path[:-4]
-                path = base + '.exe'
-            self.upx_path.setText(path)
-            self.upx_path.setPlaceholderText("")
-            self.upx_path.setToolTip(f"UPX: {path}")
-        else:
-            self.upx_path.setText("")
-
     def _set_upx_environment(self, upx_path):
         """设置 UPX 环境变量（当前进程生效）"""
         if not upx_path or not os.path.exists(upx_path):
             return
         upx_dir = os.path.dirname(upx_path)
-        # 设置 UPX 相关环境变量
         os.environ['UPX'] = upx_path
         os.environ['UPX_DIR'] = upx_dir
-        # 添加到 PATH（临时，当前进程生效）
         current_path = os.environ.get('PATH', '')
         if upx_dir not in current_path:
             os.environ['PATH'] = upx_dir + os.pathsep + current_path
@@ -13010,10 +12932,7 @@ class PackageMainWindow(QMainWindow):
 
     def _async_find_python(self):
         """异步查找Python - 含调试日志"""
-        import shutil
         import re
-        import glob
-        import time
         from collections import OrderedDict
 
         def is_valid_python(exe_path):
@@ -13140,7 +13059,7 @@ class PackageMainWindow(QMainWindow):
                         python_dict[sys.executable] = (ver, "venv")
                     else:
                         python_dict[sys.executable] = (ver, "current")
-        # ===== 5. 如果 common_venv 被漏掉了，强制加入 =====
+        # ===== 5. 如果 common_venv  =====
         if common_venv_path and common_venv_path not in python_dict:
             ver = get_python_version(common_venv_path)
             python_dict[common_venv_path] = (ver, "common_venv")
@@ -13191,23 +13110,6 @@ class PackageMainWindow(QMainWindow):
         else:
             self.safe_log("⚠️ 未找到任何有效的 Python 解释器")
 
-    def _add_python_to_list(self, python_path, version):
-        """把Python添加到下拉列表（不选中）"""
-        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
-        if not self._is_valid_python(python_path):
-            return
-
-        def do_add():
-            index = self.python_path.findText(python_path)
-            if index < 0:
-                self.python_path.addItem(python_path)
-        if QThread.currentThread() != QApplication.instance().thread():
-            QMetaObject.invokeMethod(self, "_add_python_to_list_safe",
-                                     Qt.ConnectionType.QueuedConnection,
-                                     Q_ARG(str, python_path))
-        else:
-            do_add()
-
     def _add_python_to_list_safe(self, python_path):
         """线程安全地添加Python到列表（由 invokeMethod 调用）"""
         if not self._is_valid_python(python_path):
@@ -13220,47 +13122,6 @@ class PackageMainWindow(QMainWindow):
                 self.python_path.setCurrentIndex(0)
             else:
                 self.python_path.addItem(python_path)
-
-    def _set_python_ui(self, python_path, version):
-        """设置Python UI（主线程执行）"""
-        if not self._is_valid_python(python_path):
-            return
-        # ===== 保存缓存 =====
-        cache = load_cache()
-        cache['python'] = {'path': python_path, 'version': version, 'time': time.time()}
-        save_cache(cache)
-        index = self.python_path.findText(python_path)
-        if index < 0:
-            self.python_path.addItem(python_path)
-            index = self.python_path.findText(python_path)
-        if index >= 0:
-            self.python_path.setCurrentIndex(index)
-        self.python_version.setText(version)
-        self.status_python.setText(f"🐍 Python: {version}")
-        self.safe_log(f"✅ 自动选择Python: {python_path}")
-        # ===== 触发后续逻辑 =====
-        self._on_python_selected()
-
-    def _update_python_found(self, python_path, version):
-        """主线程中更新Python找到后的UI"""
-        # ===== 先检查是否已存在 =====
-        if not self._is_valid_python(python_path):
-            return
-        index = self.python_path.findText(python_path)
-        if index >= 0:
-            self.python_path.setCurrentIndex(index)
-        else:
-            self.python_path.addItem(python_path)
-            self.python_path.setCurrentText(python_path)
-        self.python_version.setText(version)
-        self.status_python.setText(f"🐍 Python: {version}")
-        self.safe_log(f"✅ 自动选择Python: {python_path}")
-        # ===== 保存缓存 =====
-        cache = load_cache()
-        cache['python'] = {'path': python_path, 'version': version, 'time': time.time()}
-        save_cache(cache)
-        # ===== 触发后续逻辑 =====
-        self._on_python_selected()
 
     def _detect_rust_async(self):
         """异步检测Rust"""
@@ -13283,9 +13144,6 @@ class PackageMainWindow(QMainWindow):
 
     def _async_find_system_python(self):
         """异步查找系统Python（打包模式）"""
-        import shutil
-        import glob
-        import time
         import re
         from collections import OrderedDict
 
@@ -13300,7 +13158,6 @@ class PackageMainWindow(QMainWindow):
                     if path.lower() == sys.executable.lower():
                         return False
             try:
-                import subprocess
                 if sys.platform == 'win32':
                     result = subprocess.run(
                         [path, '--version'],
@@ -13318,7 +13175,6 @@ class PackageMainWindow(QMainWindow):
 
         def get_python_version(py_path):
             try:
-                import subprocess
                 if sys.platform == 'win32':
                     result = subprocess.run(
                         [py_path, '--version'],
@@ -13350,7 +13206,6 @@ class PackageMainWindow(QMainWindow):
         if sys.platform == 'win32':
             for cmd in ['python', 'python3']:
                 try:
-                    import subprocess
                     result = subprocess.run(
                         ['where', cmd],
                         capture_output=True, text=True, timeout=3,
@@ -13380,7 +13235,6 @@ class PackageMainWindow(QMainWindow):
         else:
             for cmd in ['python3', 'python']:
                 try:
-                    import subprocess
                     result = subprocess.run(
                         ['which', cmd],
                         capture_output=True, text=True, timeout=3
@@ -13427,43 +13281,8 @@ class PackageMainWindow(QMainWindow):
         else:
             self.safe_log("⚠️ 未找到任何有效的 Python 解释器")
 
-    def _set_system_python_ui(self, py_path):
-        """设置系统Python到UI（主线程调用）"""
-        if not py_path or not os.path.exists(py_path):
-            return
-        # 保存到实例变量
-        self.python_exe = py_path
-        # 添加到下拉列表
-        if not self._is_valid_python(py_path):
-            return
-        idx = self.python_path.findText(py_path)
-        if idx < 0:
-            self.python_path.addItem(py_path)
-            idx = self.python_path.findText(py_path)
-        if idx >= 0:
-            self.python_path.setCurrentIndex(idx)
-        # 获取版本
-        try:
-            result = self._run_hidden([py_path, '--version'], capture_output=True, text=True, timeout=3)
-            ver = result.stdout.strip() or result.stderr.strip()
-            if ver:
-                self.python_version.setText(ver)
-                self.status_python.setText(f"🐍 {ver}")
-                self.safe_log(f"✅ 找到系统Python: {py_path} ({ver})")
-            else:
-                self.safe_log(f"✅ 找到系统Python: {py_path}")
-        except Exception as e:
-            self.safe_log(f"✅ 找到系统Python: {py_path}")
-        # 保存到缓存
-        cache = load_cache()
-        cache['python'] = {'path': py_path, 'version': self.python_version.text()}
-        save_cache(cache)
-        # 触发后续逻辑
-        self._on_python_selected()
-
     def _find_system_python(self):
         """查找系统Python（打包模式专用，优先venv）"""
-        import shutil
 
         def is_valid_python(path):
             if not path or not os.path.exists(path):
@@ -13529,7 +13348,6 @@ class PackageMainWindow(QMainWindow):
                 rf'C:\Users\{username}\AppData\Local\Programs\Python\Python310\python.exe',
             ]
             # 使用 glob 扫描
-            import glob
             for pattern in [r'C:\Python*', rf'C:\Users\{username}\AppData\Local\Programs\Python\Python*']:
                 for p in glob.glob(pattern):
                     if os.path.isdir(p):
@@ -13563,94 +13381,14 @@ class PackageMainWindow(QMainWindow):
                         self._set_python_path(python_path)
         except: pass
 
-    def _check_packer_version_async(self, packer_name):
-        """通用异步检测打包器版本"""
-        python_exe = self.python_path.currentText()
-        if not python_exe or not os.path.exists(python_exe):
-            self.status_packer.setText(f"📦 {packer_name}: 等待Python...")
-            self.status_packer.setStyleSheet("color: orange;")
-            return
-        # ===== 统一打包器显示名称 =====
-        display = self._get_packer_display_name(packer_name)
-        cache_key = f"{display}@{python_exe}"
-        # ===== 先读内存缓存 =====
-        if cache_key in self._packer_version_cache:
-            version = self._packer_version_cache[cache_key]
-            self._update_packer_status(display, version or "")
-            return
-        # ===== 再读文件缓存 =====
-        try:
-            cache = load_cache()
-            packer_versions = cache.get('packer_versions', {})
-            version = packer_versions.get(cache_key)
-            if version is not None:
-                self._packer_version_cache[cache_key] = version
-                self._update_packer_status(display, version or "")
-                return
-        except:
-            pass
-        # ===== 缓存未命中，显示检测中 =====
-        self.status_packer.setText(f"📦 {display}: 检测中...")
-        self.status_packer.setStyleSheet("color: orange;")
-
-        def detect():
-            version = self._check_packer_version(packer_name, python_exe)
-            self._packer_version_cache[cache_key] = version
-            # 保存到文件缓存
-            try:
-                cache = load_cache()
-                if 'packer_versions' not in cache:
-                    cache['packer_versions'] = {}
-                cache['packer_versions'][cache_key] = version
-                save_cache(cache)
-            except:
-                pass
-            # 更新UI
-            QTimer.singleShot(0, lambda: self._update_packer_status(display, version or ""))
-        threading.Thread(target=detect, daemon=True).start()
-
-    def _update_rust_compiler_status(self):
-        """更新 Rust 编译器状态 - 先读缓存，没有才检测"""
-        # ===== 从缓存读取 =====
-        cache = load_cache()
-        compiler_cache = cache.get('rust_compiler', {})
-        has_cargo = compiler_cache.get('has_cargo', False)
-        has_rustc = compiler_cache.get('has_rustc', False)
-        cargo_path = compiler_cache.get('cargo_path', '')
-        rustc_path = compiler_cache.get('rustc_path', '')
-        # ===== 有缓存直接使用 =====
-        if has_cargo or has_rustc:
-            self._update_rust_compiler_status_result(has_cargo, has_rustc, cargo_path, rustc_path)
-            return
-        # ===== 没有缓存才检测 =====
-        self.status_compiler.setText("⏳ 检测Rust...")
-        self.status_compiler.setStyleSheet("color: orange;")
-
-        def detect():
-            has_cargo, cargo_path = self._check_cargo_with_path()
-            has_rustc, rustc_path = self._check_rustc_with_path()
-            rust_version = self._get_rust_version(rustc_path) if has_rustc else ""
-            self._cached_has_cargo = has_cargo
-            self._cached_has_rustc = has_rustc
-            self._cached_cargo_path = cargo_path
-            self._cached_rustc_path = rustc_path
-            self._cached_rust_version = rust_version
-            self._save_all_backend_cache()
-            QTimer.singleShot(0, lambda: self._update_rust_compiler_status_result(
-                has_cargo, has_rustc, cargo_path, rustc_path
-            ))
-        threading.Thread(target=detect, daemon=True).start()
-
     def _check_cargo_with_path(self):
         """检测 Cargo 是否可用，并返回路径（跨平台）"""
-        # 1. 检查 cargo 是否在 PATH 中
         cargo_path = shutil.which("cargo")
         if cargo_path and os.path.exists(cargo_path):
             # ===== 统一后缀为小写 =====
             if sys.platform == 'win32' and cargo_path.lower().endswith('.exe'):
                 cargo_path = cargo_path[:-4] + '.exe'
             return True, cargo_path
-        # 2. 检查常见安装路径
         if sys.platform == 'win32':
             # Windows 常见路径
             username = os.environ.get('USERNAME', '')
@@ -13691,14 +13429,12 @@ class PackageMainWindow(QMainWindow):
 
     def _check_rustc_with_path(self):
         """检测 Rustc 是否可用，并返回路径（跨平台）"""
-        # 1. 检查 rustc 是否在 PATH 中
         rustc_path = shutil.which("rustc")
         if rustc_path and os.path.exists(rustc_path):
             # ===== 统一后缀为小写 =====
             if sys.platform == 'win32' and rustc_path.lower().endswith('.exe'):
                 rustc_path = rustc_path[:-4] + '.exe'
             return True, rustc_path
-        # 2. 检查常见安装路径
         if sys.platform == 'win32':
             username = os.environ.get('USERNAME', '')
             rustc_paths = [
@@ -13756,9 +13492,8 @@ class PackageMainWindow(QMainWindow):
 
         def detect():
             has_msvc, msvc_path = self._check_msvc_with_path()
-            has_mingw, mingw_path = self._check_mingw_with_path()
+            has_mingw, mingw_path, mingw_version = self._check_mingw_with_path()
             msvc_version = self._get_compiler_version(msvc_path, "msvc") if has_msvc else ""
-            mingw_version = self._get_compiler_version(mingw_path, "mingw") if has_mingw else ""
             self._cached_has_msvc = has_msvc
             self._cached_has_mingw = has_mingw
             self._cached_msvc_path = msvc_path
@@ -13770,6 +13505,148 @@ class PackageMainWindow(QMainWindow):
                 has_msvc, has_mingw, msvc_path, mingw_path
             ))
         threading.Thread(target=detect, daemon=True).start()
+
+    def _download_clang(self):
+        """自动下载 Clang 编译器"""
+        if getattr(self, '_clang_downloading', False):
+            return
+        if self.is_building:
+            self.safe_log("⚠️ 打包进行中，稍后自动下载 Clang")
+            return
+        # ===== 检查是否已安装 =====
+        has_clang, clang_path = self._check_clang_with_path()
+        if has_clang:
+            self.safe_log(f"✅ Clang 已安装: {clang_path}")
+            return
+        self.safe_log("⚠️ Clang 编译器未安装，正在自动下载...")
+        self.safe_log("   📥 下载地址: https://releases.llvm.org/")
+        self._clang_downloading = True
+        self.status_compiler.setText("⏳ 正在下载 Clang...")
+        self.status_compiler.setStyleSheet("color: orange;")
+
+        def download_thread():
+            try:
+                import urllib.request
+                import ssl
+                import tempfile
+                import zipfile
+                import shutil
+                # ===== 根据平台选择版本 =====
+                if sys.platform == 'win32':
+                    # Windows 下载 LLVM 安装包
+                    # 使用最新稳定版 22.1.8
+                    version = "22.1.8"
+                    filename = f"LLVM-{version}-win64.exe"
+                    mirrors = [
+                        f"https://ghproxy.net/https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/llvmorg-{version}/{filename}",
+                        f"https://gh-proxy.com/https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/llvmorg-{version}/{filename}",
+                        f"https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/llvmorg-{version}/{filename}",
+                    ]
+                    tools_dir = os.path.join(get_exe_directory(), 'tools', 'llvm')
+                    os.makedirs(tools_dir, exist_ok=True)
+                    installer_path = os.path.join(tempfile.gettempdir(), filename)
+                elif sys.platform == 'darwin':
+                    # macOS 使用 Homebrew 或官网 pkg
+                    self.safe_log("🍎 macOS 请使用: brew install llvm")
+                    self.safe_log("   或下载: https://releases.llvm.org/download.html")
+                    self._clang_downloading = False
+                    return
+                else:
+                    # Linux
+                    self.safe_log("🐧 Linux 请使用包管理器: sudo apt install clang")
+                    self.safe_log("   或: sudo dnf install clang")
+                    self._clang_downloading = False
+                    return
+                # ===== 下载 =====
+                downloaded = False
+                last_error = ""
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                for i, url in enumerate(mirrors):
+                    if not self._is_running:
+                        self._clang_downloading = False
+                        return
+                    try:
+                        self.safe_log(f"📥 下载中... 尝试镜像 {i+1}/{len(mirrors)}")
+                        req = urllib.request.Request(url, headers={
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        })
+                        with urllib.request.urlopen(req, context=ssl_context, timeout=60) as response:
+                            total_size = int(response.headers.get('content-length', 0))
+                            downloaded_size = 0
+                            with open(installer_path, 'wb') as f:
+                                while self._is_running:
+                                    chunk = response.read(8192)
+                                    if not chunk:
+                                        break
+                                    f.write(chunk)
+                                    downloaded_size += len(chunk)
+                                    if total_size > 0:
+                                        progress = int(downloaded_size * 100 / total_size)
+                                        if progress % 10 == 0:
+                                            self.safe_log(f"📥 下载进度: {progress}%")
+                        downloaded = True
+                        self.safe_log(f"✅ 下载完成: {installer_path}")
+                        break
+                    except Exception as e:
+                        last_error = str(e)
+                        continue
+                if not downloaded:
+                    self.safe_log(f"❌ 下载失败: {last_error}")
+                    self.status_compiler.setText("🔧 Clang: 下载失败")
+                    self.status_compiler.setStyleSheet("color: red;")
+                    self._clang_downloading = False
+                    return
+                # ===== 安装 =====
+                self.safe_log("📦 正在安装 Clang...")
+                self.status_compiler.setText("⏳ 正在安装 Clang...")
+                self.status_compiler.setStyleSheet("color: orange;")
+                if sys.platform == 'win32':
+                    # 静默安装到 tools/llvm 目录
+                    cmd = [
+                        installer_path,
+                        '/S',  # 静默安装
+                        f'/D={tools_dir}',
+                        '--add-to-path=0',
+                    ]
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                    )
+                    process.wait(timeout=300)
+                    if process.returncode == 0:
+                        self.safe_log(f"✅ Clang 安装成功: {tools_dir}")
+                        # ===== 重新检测并落盘：确保缓存持久化（不受检测门控影响）+ 获取真实版本 =====
+                        self._backends_detected = True
+                        has_clang, clang_path = self._check_clang_with_path()
+                        self._cached_has_clang = has_clang
+                        self._cached_clang_path = clang_path or os.path.join(tools_dir, 'bin', 'clang.exe')
+                        if has_clang:
+                            self._cached_clang_version = self._get_clang_version(self._cached_clang_path)
+                        else:
+                            self._cached_clang_version = "已安装"
+                        self._save_all_backend_cache()
+                        QTimer.singleShot(0, self._display_compiler_status)
+                    else:
+                        self.safe_log(f"❌ Clang 安装失败 (返回码: {process.returncode})")
+                        self.status_compiler.setText("🔧 Clang: 安装失败")
+                        self.status_compiler.setStyleSheet("color: red;")
+                # 清理安装包
+                try:
+                    os.remove(installer_path)
+                except:
+                    pass
+            except Exception as e:
+                self.safe_log(f"❌ Clang 下载安装失败: {e}")
+                self.status_compiler.setText("🔧 Clang: 安装失败")
+                self.status_compiler.setStyleSheet("color: red;")
+            finally:
+                self._clang_downloading = False
+        threading.Thread(target=download_thread, daemon=True).start()
 
     def _update_compiler_status_result(self, has_msvc, has_mingw, msvc_path="", mingw_path="", backend=None):
         """更新编译器状态UI（主线程）- 直接设置 status_compiler"""
@@ -13816,73 +13693,179 @@ class PackageMainWindow(QMainWindow):
                 self.status_compiler.setStyleSheet("color: red;")
 
     def _on_backend_changed(self, backend):
-        """用户切换后端时立即更新（从缓存读取）"""
+        """用户切换后端时更新显示，只有选择 zig 时才触发安装"""
         packer = self.packer_combo.currentText()
         if packer == "Nuitka":
             self._display_compiler_status()
-            self._save_all_backend_cache()
-            self.safe_log(f"🔧 切换后端: {backend}")
+            #self.safe_log(f"🔧 切换后端: {backend}")
+            if backend == "zig":
+                # 步骤1: 先读缓存（内存操作，很快）
+                has_zig = self._load_zig_from_cache()
+                if has_zig:
+                    self.safe_log(f"✅ Zig 编译器已安装 ({self._cached_zig_version})")
+                    self._display_compiler_status()
+                    return
+                # 步骤2: 缓存没有，后台线程检测，界面立即显示"检测中"
+                self.status_compiler.setText("🔧 Zig: 检测中...")
+                self.status_compiler.setStyleSheet("color: orange;")
+                def detect_zig_thread():
+                    python_exe = self.python_path.currentText() or sys.executable
+                    has_zig, zig_path, zig_type, zig_version = self._check_zig_with_path(python_exe)
+                    if has_zig:
+                        self._cached_has_zig = True
+                        self._cached_zig_path = zig_path
+                        self._cached_zig_type = zig_type
+                        self._cached_zig_version = zig_version
+                        env_id = self._get_python_env_id(python_exe)
+                        if not hasattr(self, '_cached_zig_venvs'):
+                            self._cached_zig_venvs = {}
+                        self._cached_zig_venvs[env_id] = {
+                            'has_zig': True,
+                            'path': zig_path,
+                            'version': zig_version,
+                            'type': zig_type
+                        }
+                        self.save_cache()
+                        #self.safe_log(f"✅ Zig 检测成功 ({zig_version})，已更新缓存")
+                        QTimer.singleShot(0, self._display_compiler_status)
+                    else:
+                        self.safe_log("⚠️ Zig 编译器未安装，正在自动安装...")
+                        if not getattr(self, '_zig_installing', False):
+                            QTimer.singleShot(0, self._install_zig)
+                threading.Thread(target=detect_zig_thread, daemon=True).start()
+            elif backend == "clang" and not self._cached_has_clang:
+                self.safe_log("⚠️ Clang 编译器未安装")
+                self.safe_log("   💡 下载地址: https://releases.llvm.org/")
+                if show_msg(self, "安装 Clang", "Clang 未安装，是否自动下载安装？\n下载约 450MB", 5, 'yes_no'):
+                    self._download_clang()
 
-    def _detect_single_packer_async(self, packer_name):
-        """只检测单个打包器（首次使用时）"""
-        python_exe = self.python_path.currentText()
-        if not python_exe or not os.path.exists(python_exe):
-            return
-        display = self._get_packer_display_name(packer_name)
-        cache_key = f"{display}@{python_exe}"
-        if cache_key in self._packer_versions_cache:
-            return
-        self.status_packer.setText(f"📦 {display}: 检测中...")
-        self.status_packer.setStyleSheet("color: orange;")
-
-        def detect():
-            version = self._check_packer_version(packer_name, python_exe)
-            self._packer_versions_cache[cache_key] = version
-            self._save_all_backend_cache()
-            QTimer.singleShot(0, lambda: self._update_packer_status(display, version or ""))
-        threading.Thread(target=detect, daemon=True).start()
+    def _load_zig_from_cache(self):
+        """从缓存加载 Zig 状态（按当前环境读取）"""
+        # 内存中已有系统 zig，直接复用
+        if getattr(self, '_cached_zig_system', False) and self._cached_has_zig:
+            return True
+        try:
+            if not os.path.exists(self.global_cache_file):
+                return False
+            with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
+                cache = json.load(f)
+            python_exe = self.python_path.currentText() or sys.executable
+            env_id = self._get_python_env_id(python_exe)
+            # 1. 系统安装（全局共享，所有环境可用）
+            zig_system = cache.get('zig_system', {})
+            if zig_system.get('has_zig', False):
+                self._cached_zig_system = True
+                self._cached_zig_system_path = zig_system.get('path', '')
+                self._cached_zig_system_version = zig_system.get('version', 'detected')
+                self._cached_has_zig = True
+                self._cached_zig_path = zig_system.get('path', '')
+                self._cached_zig_type = 'system'
+                self._cached_zig_version = zig_system.get('version', 'detected')
+                return True
+            # 2. 当前环境的 pip 安装
+            zig_venvs = cache.get('zig_venvs', {})
+            env_zig = zig_venvs.get(env_id, {})
+            if env_zig.get('has_zig', False):
+                self._cached_has_zig = True
+                self._cached_zig_path = env_zig.get('path', '')
+                self._cached_zig_type = env_zig.get('type', 'pip_module')
+                self._cached_zig_version = env_zig.get('version', 'detected')
+                return True
+            # 3. 检查其他环境（仅提示）
+            for other_env_id, other_zig in zig_venvs.items():
+                if other_zig.get('has_zig', False):
+                    self.safe_log(f"ℹ️ Zig 已安装在 {other_env_id}，当前环境 {env_id} 未安装")
+                    self.safe_log("   💡 请切换到对应的 Python 环境，或手动 pip install ziglang")
+                    self._cached_has_zig = False
+                    return False
+            self._cached_has_zig = False
+            return False
+        except Exception as e:
+            self.safe_log(f"⚠️ 加载 Zig 缓存失败: {e}")
+            return False
 
     def _detect_all_backends_async(self):
         """后台一次性检测所有后端"""
 
         def detect():
-            # ===== 检测编译器 =====
+            python_exe = self.python_path.currentText() or sys.executable
+            env_id = self._get_python_env_id(python_exe)
+            # 1. 检测 MSVC
             has_msvc, msvc_path = self._check_msvc_with_path()
-            has_mingw, mingw_path = self._check_mingw_with_path()
-            # ===== 关键修复：传入正确的路径获取版本 =====
-            msvc_version = ""
-            mingw_version = ""
-            if has_msvc and msvc_path:
-                msvc_version = self._get_compiler_version(msvc_path, "msvc")
-            if has_mingw and mingw_path:
-                mingw_version = self._get_compiler_version(mingw_path, "mingw")
+            msvc_version = self._get_compiler_version(msvc_path, "msvc") if has_msvc else ""
             self._cached_has_msvc = has_msvc
-            self._cached_has_mingw = has_mingw
             self._cached_msvc_path = msvc_path
-            self._cached_mingw_path = mingw_path
             self._cached_msvc_version = msvc_version
+            # 2. 检测 MinGW
+            has_mingw, mingw_path, mingw_version = self._check_mingw_with_path()
+            self._cached_has_mingw = has_mingw
+            self._cached_mingw_path = mingw_path
             self._cached_mingw_version = mingw_version
-            # ===== 检测Rust =====
+            # 3. 检测 Clang
+            has_clang, clang_path = self._check_clang_with_path()
+            clang_version = self._get_clang_version(clang_path) if has_clang else ""
+            self._cached_has_clang = has_clang
+            self._cached_clang_path = clang_path
+            self._cached_clang_version = clang_version
+            # 4. 检测 Zig
+            has_zig, zig_path, zig_type, zig_version = self._check_zig_with_path(python_exe)
+            self._cached_has_zig = has_zig
+            self._cached_zig_path = zig_path
+            self._cached_zig_type = zig_type
+            self._cached_zig_version = zig_version
+            if has_zig:
+                if zig_type == 'system':
+                    self._cached_zig_system = True
+                    self._cached_zig_system_path = zig_path
+                    self._cached_zig_system_version = zig_version
+                elif zig_type in ['pip', 'pip_module']:
+                    # pip 安装的 Zig 写入 zig_venvs
+                    if not hasattr(self, '_cached_zig_venvs'):
+                        self._cached_zig_venvs = {}
+                    self._cached_zig_venvs[env_id] = {
+                        'has_zig': True,
+                        'path': zig_path,
+                        'version': zig_version,
+                        'type': zig_type
+                    }
+            # 4.5 补测其他已知 Python 环境的 pip zig（记录到 zig_venvs，切换环境时可恢复）
+            try:
+                known = [self.python_path.itemText(i) for i in range(self.python_path.count())]
+                for other in known:
+                    if not other or other == python_exe or not os.path.exists(other):
+                        continue
+                    o_env = self._get_python_env_id(other)
+                    if o_env in getattr(self, '_cached_zig_venvs', {}):
+                        continue
+                    o_has, o_path, o_type, o_ver = self._check_zig_with_path(other)
+                    if o_has and o_path and ('site-packages' in o_path or 'ziglang' in o_path):
+                        if not hasattr(self, '_cached_zig_venvs'):
+                            self._cached_zig_venvs = {}
+                        self._cached_zig_venvs[o_env] = {
+                            'has_zig': True, 'path': o_path, 'version': o_ver, 'type': o_type or 'pip_module'
+                        }
+            except Exception:
+                pass
+            # 5. 检测 Rust
             has_cargo, cargo_path = self._check_cargo_with_path()
             has_rustc, rustc_path = self._check_rustc_with_path()
-            rust_version = ""
-            if has_rustc and rustc_path:
-                rust_version = self._get_rust_version(rustc_path)
+            rust_version = self._get_rust_version(rustc_path) if has_rustc else ""
             self._cached_has_cargo = has_cargo
             self._cached_has_rustc = has_rustc
             self._cached_cargo_path = cargo_path
             self._cached_rustc_path = rustc_path
             self._cached_rust_version = rust_version
-            # ===== 检测NSIS =====
+            # 6. 检测 NSIS
             has_nsis, nsis_path = self._check_nsis_with_path()
-            nsis_version = ""
-            if has_nsis and nsis_path:
-                nsis_version = self._get_nsis_version(nsis_path)
+            nsis_version = self._get_nsis_version(nsis_path) if has_nsis else ""
             self._cached_has_nsis = has_nsis
             self._cached_nsis_path = nsis_path
             self._cached_nsis_version = nsis_version
-            # ===== 检测所有打包器版本 =====
-            python_exe = self.python_path.currentText()
+            # ===== 编译器/工具链检测完成：立即保存并刷新 UI（不等打包器检测，避免状态长时间停留在“未安装”） =====
+            self._backends_detected = True
+            self._save_all_backend_cache()
+            QTimer.singleShot(0, self._update_all_backend_ui)
+            # 7. 检测打包器版本
             if python_exe and os.path.exists(python_exe):
                 for packer in ["PyInstaller", "Nuitka", "PyApp", "Py2exe",
                                "Cx_Freeze", "Pynsist", "PyOxidizer", "Py2app"]:
@@ -13890,9 +13873,12 @@ class PackageMainWindow(QMainWindow):
                     if cache_key not in self._packer_versions_cache:
                         version = self._check_packer_version(packer, python_exe)
                         self._packer_versions_cache[cache_key] = version
-            # ===== 保存所有缓存 =====
+            # 8. 打包器检测完成后再次保存（编译器结果已提前落盘，此处补齐打包器版本）
             self._save_all_backend_cache()
+            # 9. 更新打包器版本 UI（再次刷新，此时打包器缓存已填充）
             QTimer.singleShot(0, self._update_all_backend_ui)
+            if has_zig:
+                self.safe_log(f"✅ Zig 检测成功: {zig_type} ({zig_path})")
         threading.Thread(target=detect, daemon=True).start()
 
     def _show_packer_version_from_cache(self, display, python_path):
@@ -13913,7 +13899,6 @@ class PackageMainWindow(QMainWindow):
                 )
                 output = result.stdout.strip() or result.stderr.strip()
                 if output:
-                    import re
                     match = re.search(r'(\d+\.\d+\.\d+)', output)
                     if match:
                         return match.group(1)
@@ -13928,7 +13913,6 @@ class PackageMainWindow(QMainWindow):
                     )
                     output = result.stderr.strip() or result.stdout.strip()
                     if output:
-                        import re
                         # 匹配中文 "编译器 19.44.35227"
                         match = re.search(r'编译器\s+(\d+\.\d+\.\d+)', output)
                         if match:
@@ -13944,7 +13928,6 @@ class PackageMainWindow(QMainWindow):
                 except Exception as e:
                     self.safe_log(f"⚠️ 运行MSVC失败: {e}")
                 # ===== 方法2：从路径提取版本号（备选） =====
-                import re
                 match = re.search(r'MSVC[\\/](\d+\.\d+\.\d+)', compiler_path, re.IGNORECASE)
                 if match:
                     return match.group(1)
@@ -13956,7 +13939,6 @@ class PackageMainWindow(QMainWindow):
 
     def _update_rust_compiler_status_result(self, has_cargo, has_rustc, cargo_path="", rustc_path=""):
         """更新 Rust 编译器状态UI（主线程）- 显示版本"""
-        # 保存到实例变量
         self._cached_has_cargo = has_cargo
         self._cached_has_rustc = has_rustc
         self._cached_cargo_path = cargo_path
@@ -13986,7 +13968,6 @@ class PackageMainWindow(QMainWindow):
     def _get_rust_version(self, rustc_path):
         """获取 Rust 版本号"""
         try:
-            # rustc --version 输出示例: rustc 1.80.0 (051478957 2024-07-21)
             result = self._run_hidden(
                 [rustc_path, "--version"],
                 capture_output=True, text=True, timeout=5,
@@ -13994,12 +13975,9 @@ class PackageMainWindow(QMainWindow):
             )
             output = result.stdout.strip() or result.stderr.strip()
             if output:
-                import re
-                # 匹配 rustc 1.80.0
                 match = re.search(r'rustc\s+(\d+\.\d+\.\d+)', output, re.IGNORECASE)
                 if match:
                     return match.group(1)
-                # 匹配 1.80.0
                 match = re.search(r'(\d+\.\d+\.\d+)', output)
                 if match:
                     return match.group(1)
@@ -14007,78 +13985,296 @@ class PackageMainWindow(QMainWindow):
         except Exception:
             return "已安装"
 
-    def _detect_msvc(self):
+    def _check_zig_with_path(self, python_exe=None):
+        """检测 Zig 是否可用，返回 (has_zig, zig_exe_path, install_type, version)
+        检测顺序: tools/zig/ → 常见目录 → 系统PATH → pip安装
+        """
+        if python_exe is None:
+            python_exe = self.python_path.currentText() or sys.executable
+        # ===== 1. 优先检测 tools/zig/ 目录（官网下载的）=====
+        tools_zig_dir = os.path.join(get_exe_directory(), 'tools', 'zig')
+        if os.path.exists(tools_zig_dir):
+            for root, dirs, files in os.walk(tools_zig_dir):
+                if 'zig.exe' in files:
+                    zig_path = os.path.join(root, 'zig.exe')
+                    try:
+                        result = subprocess.run(
+                            [zig_path, 'version'],
+                            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5
+                        )
+                        if result.returncode == 0:
+                            raw = result.stdout.strip().split('\n')[0]
+                            if raw.lower().startswith('zig '):
+                                raw = raw[4:].strip()
+                            match = re.search(r'(\d+\.\d+\.\d+)', raw)
+                            ver = match.group(1) if match else 'detected'
+                            return True, zig_path, "system", ver
+                    except:
+                        pass
+                    return True, zig_path, "system", "detected"
+         # ===== 2. 检测常见安装目录 =====
+        common_zig_dirs = [
+            r'C:\zig',
+            r'C:\Program Files\zig',
+            r'C:\Program Files (x86)\zig',
+            r'D:\Program Files\zig',
+            r'D:\Program Files (x86)\zig',
+            r'D:\PyCharm 2024.1\pythonProject\Python-script-packaging-tool\tools\zig',
+            os.path.join(os.path.expanduser('~'), 'zig'),
+        ]
+        for d in common_zig_dirs:
+            zig_exe = os.path.join(d, 'zig.exe')
+            if os.path.exists(zig_exe):
+                try:
+                    result = subprocess.run(
+                        [zig_exe, 'version'],
+                        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5
+                    )
+                    if result.returncode == 0:
+                        raw = result.stdout.strip().split('\n')[0]
+                        if raw.lower().startswith('zig '):
+                            raw = raw[4:].strip()
+                        match = re.search(r'(\d+\.\d+\.\d+)', raw)
+                        ver = match.group(1) if match else 'detected'
+                        return True, zig_exe, "system", ver
+                except:
+                    pass
+        # ===== 3. 检测系统 PATH 中的全局 zig =====
+        zig_path = shutil.which("zig")
+        if zig_path and os.path.exists(zig_path):
+            try:
+                result = subprocess.run(
+                    [zig_path, 'version'],
+                    capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5
+                )
+                if result.returncode == 0:
+                    raw = result.stdout.strip().split('\n')[0]
+                    if raw.lower().startswith('zig '):
+                        raw = raw[4:].strip()
+                    match = re.search(r'(\d+\.\d+\.\d+)', raw)
+                    ver = match.group(1) if match else 'detected'
+                    return True, zig_path, "system", ver
+            except:
+                pass
+            return True, zig_path, "system", "detected"
+        # ===== 4. 检测当前环境 pip 安装的 ziglang =====
+        pip_zig_candidates = []
+        py_dir = os.path.dirname(python_exe)
+        for rel in ['Scripts/zig.exe', 'bin/zig.exe', 'Scripts/zig', 'bin/zig']:
+            p = os.path.join(py_dir, rel)
+            if os.path.exists(p):
+                pip_zig_candidates.append(p)
         try:
-            result = self._run_hidden(['cl'], capture_output=True, text=True, startupinfo=get_startupinfo())
-            if result.returncode == 0 or 'Microsoft' in result.stderr:
-                self.safe_log("🔧 检测到MSVC编译器")
-                self.status_compiler.setText("🔧 编译器: MSVC ✓")
-                self.status_compiler.setStyleSheet("color: green;")
-        except: pass
-
-    def _detect_mingw(self):
-        try:
-            result = self._run_hidden(['gcc', '--version'], capture_output=True, text=True, startupinfo=get_startupinfo())
+            result = subprocess.run(
+                [python_exe, '-c', 'import ziglang, os; print(os.path.dirname(ziglang.__file__))'],
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
+                startupinfo=get_startupinfo()
+            )
             if result.returncode == 0:
-                self.safe_log("🔧 检测到MinGW编译器")
-                if "MSVC" not in self.status_compiler.text():
-                    self.status_compiler.setText("🔧 编译器: MinGW ✓")
-                    self.status_compiler.setStyleSheet("color: green;")
-        except: pass
+                ziglang_dir = result.stdout.strip()
+                for name in ['zig.exe', 'zig']:
+                    p = os.path.join(ziglang_dir, name)
+                    if os.path.exists(p):
+                        pip_zig_candidates.append(p)
+        except:
+            pass
+        for zig_path in pip_zig_candidates:
+            try:
+                result = subprocess.run(
+                    [zig_path, 'version'],
+                    capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
+                    startupinfo=get_startupinfo()
+                )
+                if result.returncode == 0:
+                    raw = result.stdout.strip().split('\n')[0]
+                    if raw.lower().startswith('zig '):
+                        raw = raw[4:].strip()
+                    match = re.search(r'(\d+\.\d+\.\d+)', raw)
+                    ver = match.group(1) if match else 'detected'
+                    return True, zig_path, "pip_module", ver
+            except:
+                continue
+        return False, "", "", ""
 
-    def _update_compiler_status(self):
-        """更新编译器状态 - 先读缓存，没有才检测"""
-        backend = self.nuitka_backend_combo.currentText() if self.nuitka_backend_combo else "auto"
-        # ===== 从缓存读取 =====
-        cache = load_cache()
-        compiler_cache = cache.get('compiler', {})
-        has_msvc = compiler_cache.get('msvc', False)
-        has_mingw = compiler_cache.get('mingw', False)
-        msvc_path = compiler_cache.get('msvc_path', '')
-        mingw_path = compiler_cache.get('mingw_path', '')
-        msvc_version = compiler_cache.get('msvc_version', '')
-        mingw_version = compiler_cache.get('mingw_version', '')
-        # 保存到实例变量
-        self._cached_has_msvc = has_msvc
-        self._cached_has_mingw = has_mingw
-        self._cached_msvc_path = msvc_path
-        self._cached_mingw_path = mingw_path
-        self._cached_msvc_version = msvc_version
-        self._cached_mingw_version = mingw_version
-        # ===== 有缓存直接使用 =====
-        if has_msvc or has_mingw:
-            self._update_compiler_status_result(has_msvc, has_mingw, msvc_path, mingw_path, backend)
+    def _detect_and_save_zig(self, python_exe=None):
+        """检测当前 Python 环境的 pip zig，写入 zig_venvs"""
+        if python_exe is None:
+            python_exe = self.python_path.currentText()
+        if not python_exe or not os.path.exists(python_exe):
+            python_exe = sys.executable
+        env_id = self._get_python_env_id(python_exe)
+        has_pip_zig = False
+        zig_path = ""
+        zig_version = ""
+        # ===== 往上找有 Lib 目录的根目录 =====
+        py_dir = os.path.dirname(python_exe)
+        root_dir = py_dir
+        for _ in range(5):
+            if os.path.exists(os.path.join(root_dir, 'Lib')):
+                break
+            root_dir = os.path.dirname(root_dir)
+        zig_exe = os.path.join(root_dir, 'Lib', 'site-packages', 'ziglang', 'zig.exe')
+        #self.safe_log(f"🔍 查找: {zig_exe}")
+        if os.path.exists(zig_exe):
+            has_pip_zig = True
+            zig_path = zig_exe
+            try:
+                r = subprocess.run([zig_exe, 'version'], capture_output=True, text=True, timeout=5)
+                if r.returncode == 0:
+                    raw = r.stdout.strip().split('\n')[0]
+                    if raw.lower().startswith('zig '):
+                        raw = raw[4:].strip()
+                    match = re.search(r'(\d+\.\d+\.\d+)', raw)
+                    zig_version = match.group(1) if match else 'detected'
+            except:
+                zig_version = 'detected'
+            #self.safe_log(f"✅ 找到 pip zig: {zig_exe} ({zig_version})")
+        # ===== 写入 zig_venvs =====
+        try:
+            cache = {}
+            if os.path.exists(self.global_cache_file):
+                with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
+                    cache = json.load(f)
+            zig_venvs = cache.get('zig_venvs', {})
+            if has_pip_zig:
+                zig_venvs[env_id] = {
+                    'has_zig': True,
+                    'path': zig_path,
+                    'version': zig_version,
+                    'type': 'pip_module'
+                }
+                #self.safe_log(f"✅ zig_venvs[{env_id}] 已写入")
+            else:
+                if env_id in zig_venvs:
+                    del zig_venvs[env_id]
+                    #self.safe_log(f"🗑️ zig_venvs[{env_id}] 已删除")
+            cache['zig_venvs'] = zig_venvs
+            with open(self.global_cache_file, 'w', encoding='utf-8-sig') as f:
+                json.dump(cache, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            pass
+            #self.safe_log(f"⚠️ 写入 zig_venvs 失败: {e}")
+        self._cached_has_zig = has_pip_zig
+        self._cached_zig_path = zig_path
+        self._cached_zig_type = 'pip_module' if has_pip_zig else ''
+        self._cached_zig_version = zig_version
+        return has_pip_zig, zig_path, zig_version
+
+    def _ensure_zig_cache(self):
+        """确保当前环境的 Zig 缓存存在，没有则检测写入"""
+        python_exe = self.python_path.currentText() or sys.executable
+        env_id = self._get_python_env_id(python_exe)
+        if self._load_zig_from_cache():
+            self._display_compiler_status()
             return
-        # ===== 没有缓存才检测 =====
-        self.status_compiler.setText("⏳ 检测编译器...")
+        self.status_compiler.setText("🔧 Zig: 检测中...")
+        self.status_compiler.setStyleSheet("color: orange;")
+        self._detect_and_save_zig(python_exe)
+        self._display_compiler_status()
+
+    def _install_zig(self):
+        if getattr(self, '_zig_installing', False):
+            return
+        if self.is_building:
+            self.safe_log("⚠️ 打包进行中，稍后自动安装 Zig")
+            return
+        python_exe = self.python_path.currentText()
+        if not python_exe or not os.path.exists(python_exe):
+            python_exe = sys.executable
+        env_id = self._get_python_env_id(python_exe)
+        self.safe_log("⚠️ Zig 编译器未安装")
+        self.safe_log("   📥 下载地址: https://ziglang.org/download/")
+        self.safe_log("   📦 或通过 pip 安装: pip install ziglang")
+        self.safe_log("   ⏳ 正在尝试自动安装 (pip install ziglang)...")
+        self._zig_installing = True
+        self.status_compiler.setText("⏳ 正在安装 Zig...")
         self.status_compiler.setStyleSheet("color: orange;")
 
-        def detect():
-            has_msvc, msvc_path = self._check_msvc_with_path()
-            has_mingw, mingw_path = self._check_mingw_with_path()
-            msvc_version = self._get_compiler_version(msvc_path, "msvc") if has_msvc else ""
-            mingw_version = self._get_compiler_version(mingw_path, "mingw") if has_mingw else ""
-            self._cached_has_msvc = has_msvc
-            self._cached_has_mingw = has_mingw
-            self._cached_msvc_path = msvc_path
-            self._cached_mingw_path = mingw_path
-            self._cached_msvc_version = msvc_version
-            self._cached_mingw_version = mingw_version
-            self._save_all_backend_cache()
-            QTimer.singleShot(0, lambda: self._update_compiler_status_result(
-                has_msvc, has_mingw, msvc_path, mingw_path, backend
-            ))
-        threading.Thread(target=detect, daemon=True).start()
+        def install_thread():
+            try:
+                env = os.environ.copy()
+                env.pop('PYTHONPATH', None)
+                env.pop('PYTHONHOME', None)
+                success, result = pip_install(python_exe, 'ziglang', env=env, timeout=120, quiet=True)
+                if success:
+                    self.safe_log("✅ Zig 编译器安装成功！")
+                    has_zig, zig_path, zig_type, zig_version = self._check_zig_with_path(python_exe)
+                    self._cached_has_zig = True
+                    self._cached_zig_path = zig_path
+                    self._cached_zig_type = "pip_module"
+                    self._cached_zig_version = zig_version if zig_version != "detected" else "0.16.0"
+                    self._cached_zig_system = False
+                    # ===== 保存到当前环境 =====
+                    if not hasattr(self, '_cached_zig_pip_envs'):
+                        self._cached_zig_pip_envs = {}
+                    self._cached_zig_pip_envs[env_id] = {
+                        'has_zig': True,
+                        'path': zig_path,
+                        'version': self._cached_zig_version
+                    }
+                    self.save_cache()
+                    QTimer.singleShot(0, self._display_compiler_status)
+                else:
+                    error_msg = result.stderr[:200] if result and hasattr(result, 'stderr') else '未知错误'
+                    self.safe_log(f"   ❌ Zig 自动安装失败: {error_msg}")
+                    self.safe_log(f"   💡 请手动运行: {python_exe} -m pip install ziglang")
+                    self.status_compiler.setText("🔧 Zig: 安装失败")
+                    self.status_compiler.setStyleSheet("color: red;")
+            except subprocess.TimeoutExpired:
+                self.safe_log("❌ Zig 安装超时（120秒）")
+                self.status_compiler.setText("🔧 Zig: 安装超时")
+                self.status_compiler.setStyleSheet("color: red;")
+            except Exception as e:
+                self.safe_log(f"❌ Zig 安装异常: {e}")
+            finally:
+                self._zig_installing = False
+        threading.Thread(target=install_thread, daemon=True).start()
 
-    def _check_msvc(self):
-        """检测 MSVC 是否可用（旧接口，复用新函数）"""
-        has_msvc, _ = self._check_msvc_with_path()
-        return has_msvc
+    def _check_clang_with_path(self):
+        """检测 Clang 是否可用，并返回路径"""
+        clang_path = shutil.which("clang")
+        if clang_path and os.path.exists(clang_path):
+            return True, clang_path
+        if sys.platform == 'win32':
+            clang_paths = [
+                r"C:\Program Files\LLVM\bin\clang.exe",
+                r"C:\Program Files (x86)\LLVM\bin\clang.exe",
+                r"D:\Program Files\LLVM\bin\clang.exe",
+                r"D:\Program Files (x86)\LLVM\bin\clang.exe",
+                os.path.join(get_exe_directory(), "tools", "LLVM", "bin", "clang.exe"),
+            ]
+            for path in clang_paths:
+                if os.path.exists(path):
+                    return True, path
+        else:
+            clang_paths = ['/usr/bin/clang', '/usr/local/bin/clang', '/opt/homebrew/bin/clang']
+            for path in clang_paths:
+                if os.path.exists(path):
+                    return True, path
+        try:
+            result = subprocess.run(['clang', '--version'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5)
+            if result.returncode == 0:
+                clang_path = shutil.which("clang")
+                if clang_path:
+                    return True, clang_path
+        except:
+            pass
+        return False, ""
 
-    def _check_mingw(self):
-        """检测 MinGW 是否可用（旧接口，复用新函数）"""
-        has_mingw, _ = self._check_mingw_with_path()
-        return has_mingw
+    def _get_clang_version(self, clang_path):
+        """获取 Clang 版本号"""
+        try:
+            result = subprocess.run([clang_path, '--version'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                if lines:
+                    match = re.search(r'version\s+(\d+\.\d+\.\d+)', lines[0])
+                    if match:
+                        return match.group(1)
+                    return lines[0][:30]
+            return "已安装"
+        except:
+            return "已安装"
 
     def _check_msvc_with_path(self):
         """检测 MSVC 是否可用，并返回路径（跨平台）"""
@@ -14142,8 +14338,6 @@ class PackageMainWindow(QMainWindow):
 
     def _check_mingw_with_path(self):
         """检测 MinGW 是否可用，并返回路径和版本"""
-        import subprocess
-        import re
         gcc_path = None
         # Windows 平台检测
         if sys.platform == 'win32':
@@ -14193,7 +14387,7 @@ class PackageMainWindow(QMainWindow):
             # 方法1: gcc -dumpversion
             result = subprocess.run(
                 [gcc_path, '-dumpversion'],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5
             )
             if result.returncode == 0:
                 ver = result.stdout.strip()
@@ -14206,7 +14400,7 @@ class PackageMainWindow(QMainWindow):
                     # 方法2: gcc --version
                     result = subprocess.run(
                         [gcc_path, '--version'],
-                        capture_output=True, text=True, timeout=5
+                        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5
                     )
                     if result.returncode == 0:
                         match = re.search(r'(\d+\.\d+\.\d+)', result.stdout)
@@ -14272,7 +14466,7 @@ class PackageMainWindow(QMainWindow):
                 default_name = f"{project_name}_build_log_{datetime.now().strftime('%Y%m%d')}.txt"
             else:
                 default_name = f"build_log{datetime.now().strftime('%Y%m%d')}.txt"
-            # 直接保存，不询问覆盖
+            # 直接保存，
             file_path = os.path.join(os.path.dirname(self.output_dir.text()), default_name)
             with open(file_path, 'w', encoding='utf-8-sig') as f:
                 f.write(log_content)
@@ -14325,23 +14519,13 @@ class PackageMainWindow(QMainWindow):
         # 统一使用反斜杠
         return path.replace('/', '\\')
 
-    def _normalize_path(self, path):
-        """标准化路径（内部使用正斜杠，显示用反斜杠）"""
-        if not path:
-            return path
-        # 标准化路径
-        path = os.path.normpath(path)
-        return path
-
     def _init_packer_panel_visibility(self):
         """初始化打包器高级面板的可见性（不触发版本检测）"""
         current_packer = self.packer_combo.currentText()
-        # 判断是否需要显示高级面板
         show = current_packer in ["Nuitka", "PyInstaller-spec", "PyInstaller-cmd"]
         if hasattr(self, 'packer_opt_row'):
             self.packer_opt_row.setVisible(show)
             if show:
-                # 强制更新UI控件可见性（不检测版本）
                 self._update_packer_ui(current_packer)
         # ===== Nuitka版本检测延迟到后台 =====
         if current_packer == "Nuitka":
@@ -14373,26 +14557,11 @@ class PackageMainWindow(QMainWindow):
         self.icon_label.setText("")
         self.icon_label.setStyleSheet("color: gray; font-size: 10px;")
 
-    def _set_icon_display(self, icon_name, icon_path):
-        """延迟设置图标显示（确保UI刷新）"""
-        try:
-            self.icon_label.setText(icon_name)
-            self.icon_label.setToolTip(self._format_path(icon_path))
-            self.icon_label.setStyleSheet("color: #4caf50; font-size: 10px;")
-            # 强制刷新
-            self.icon_label.update()
-            self.icon_label.repaint()
-            self.safe_log(f"✅ 图标标签已更新: {icon_name}")
-        except Exception as e:
-            self.safe_log(f"⚠️ 设置图标标签失败: {e}")
-
     def _auto_create_venv_for_script(self, script_path):
         """用户勾选虚拟时，触发创建/切换，并安装依赖"""
         if not self.venv_mode.isChecked():
             return
-        # 确保虚拟环境已创建并切换
         self._on_venv_switch(Qt.CheckState.Checked.value)
-        # 安装缺失依赖（使用当前选中的Python，即虚拟环境）
         self._install_missing_deps_only(script_path)
 
     def _on_deps_progress(self, value):
@@ -14416,113 +14585,9 @@ class PackageMainWindow(QMainWindow):
         else:
             self.status_finish("失败")
             self.safe_log("❌ 依赖安装失败")
-        # 无论成功还是失败，都延迟隐藏状态栏进度条
         QTimer.singleShot(500, lambda: self.status_progress.setVisible(False))
         QTimer.singleShot(500, lambda: self.status_pct.setVisible(False))
         self.deps_thread = None
-
-    def _async_create_venv(self, venv_dir, venv_python, script_path):
-        """在后台线程创建虚拟环境"""
-        try:
-            import shutil
-            py = None
-            # 只排除 common_venv
-            for i in range(self.python_path.count()):
-                path = self.python_path.itemText(i)
-                if path and os.path.exists(path):
-                    if 'common_venv' not in path.lower():
-                        py = path
-                        break
-            if not py:
-                for cmd in ['python', 'python3']:
-                    p = shutil.which(cmd)
-                    if p and os.path.exists(p) and 'common_venv' not in p.lower():
-                        py = p
-                        break
-            if not py:
-                if sys.platform == 'win32':
-                    default_paths = [
-                        r'C:\Python312\python.exe',
-                        r'C:\Python311\python.exe',
-                        r'C:\Python310\python.exe',
-                    ]
-                    for p in default_paths:
-                        if os.path.exists(p):
-                            py = p
-                            break
-                else:
-                    py = '/usr/bin/python3'
-            if not py or not os.path.exists(py):
-                self.safe_log("❌ 未找到系统 Python")
-                self.venv_finish_signal.emit(False)
-                return
-            self.safe_log(f"🔧 使用系统Python创建虚拟环境: {py}")
-            self.safe_log(f"🔧 目标目录: {self._format_path(venv_dir)}")
-            self.venv_progress_signal.emit(20, "创建虚拟环境")
-            env = os.environ.copy()
-            env['PYTHONIOENCODING'] = 'utf-8'
-            env['PYTHONUTF8'] = '1'
-            if os.path.exists(venv_dir):
-                self.safe_log(f"🗑️ 删除旧虚拟环境...")
-                if sys.platform == 'win32':
-                    self._run_hidden(['cmd', '/c', 'rmdir', '/s', '/q', venv_dir], capture_output=True)
-                else:
-                    shutil.rmtree(venv_dir, ignore_errors=True)
-            result = self._run_hidden(
-                [py, "-m", "venv", venv_dir],
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                startupinfo=get_startupinfo(),
-                env=env
-            )
-            if result.returncode != 0:
-                self.safe_log(f"❌ 创建失败: {result.stderr}")
-                self.venv_finish_signal.emit(False)
-                return
-            self.safe_log("✅ 虚拟环境创建成功")
-            self.venv_progress_signal.emit(40, "创建完成")
-            if not os.path.exists(venv_python):
-                self.safe_log(f"❌ 虚拟环境Python不存在: {venv_python}")
-                self.venv_finish_signal.emit(False)
-                return
-            # ===== 安装依赖（带进度） =====
-            self.venv_progress_signal.emit(50, "安装依赖...")
-            # 在主线程中执行安装
-            QTimer.singleShot(0, lambda: self._install_dependencies_for_script(venv_python, script_path))
-            # ===== 复制 Tkinter（如果需要） =====
-            if 'tk' in self.hidden_imports_list or 'tkinter' in self.hidden_imports_list:
-                self._copy_tkinter_to_venv(venv_python)
-            # ===== 所有操作完成 =====
-            self.safe_log(f"✅ 公用虚拟环境就绪: {self._format_path(venv_dir)}")
-            self.venv_progress_signal.emit(100, "完成")
-            self.venv_finish_signal.emit(True)
-        except Exception as e:
-            self.safe_log(f"❌ 创建虚拟环境异常: {e}")
-            self.venv_finish_signal.emit(False)
-
-    def _get_target_python(self):
-        """获取目标Python"""
-        # 始终返回界面选中的Python
-        return self.python_path.currentText()
-
-    def _batch_install_in_venv(self, venv_python, modules):
-        """在虚拟环境中安装依赖（用原版逻辑）"""
-        total = len(modules)
-        for i, mod in enumerate(modules):
-            pkg = MODULE_TO_PACKAGE.get(mod, mod)
-            progress = int((i + 1) / total * 100)
-            self.venv_progress_signal.emit(progress, f"安装 {pkg} ({i + 1}/{total})")
-            self.safe_log(f"📦 安装 {pkg}...")
-            try:
-                success, result = pip_install(venv_python, pkg)
-                self.safe_log(f"{'✅' if success else '❌'} {pkg}")
-                if not success and result and result.stderr:
-                    self.safe_log(f"   错误: {result.stderr[:200]}")
-            except Exception as e:
-                self.safe_log(f"❌ 安装异常: {e}")
-        self.venv_progress_signal.emit(100, "安装完成")
 
     def _get_installed_in_venv(self, venv_python):
         """获取虚拟环境中已安装的包列表"""
@@ -14605,15 +14670,12 @@ class PackageMainWindow(QMainWindow):
         self.deps_thread.start()
 
     def _copy_tkinter_to_venv(self, venv_python):
-        """将系统 Tkinter 完整复制到虚拟环境（包括 _tkinter.pyd 和 tk 库）"""
+        """将系统 Tkinter 完整复制到虚拟环境"""
         try:
-            import shutil
-            # ===== 1. 获取系统 Python =====
             system_python = sys.executable
             if getattr(sys, 'frozen', False):
                 system_python = self._find_system_python() or sys.executable
             self.safe_log(f"🔧 系统 Python: {system_python}")
-            # ===== 2. 获取虚拟环境 site-packages 路径 =====
             result = self._run_hidden(
                 [venv_python, '-c', 'import sys; print([p for p in sys.path if "site-packages" in p][0])'],
                 capture_output=True, text=True, timeout=5,
@@ -14633,7 +14695,6 @@ class PackageMainWindow(QMainWindow):
                 self.safe_log(f"⚠️ 虚拟环境 site-packages 不存在: {venv_site_packages}")
                 return False
             self.safe_log(f"📁 虚拟环境 site-packages: {venv_site_packages}")
-            # ===== 3. 获取 tkinter 模块路径（主动 import，仅用于获取路径） =====
             result = self._run_hidden(
                 [system_python, '-c', 'import tkinter; print(tkinter.__file__)'],
                 capture_output=True, text=True, timeout=5,
@@ -14644,7 +14705,6 @@ class PackageMainWindow(QMainWindow):
             tkinter_file = result.stdout.strip()
             if not tkinter_file or not os.path.exists(tkinter_file):
                 return False
-            # ===== 4. 复制 tkinter 目录 =====
             tkinter_dir = os.path.dirname(tkinter_file)
             tkinter_name = os.path.basename(tkinter_dir)
             dest_dir = os.path.join(venv_site_packages, tkinter_name)
@@ -14654,12 +14714,42 @@ class PackageMainWindow(QMainWindow):
                 else:
                     shutil.rmtree(dest_dir, ignore_errors=True)
             shutil.copytree(tkinter_dir, dest_dir)
-            # ===== 5. 获取 Python 的 DLLs 目录 =====
             python_dir = os.path.dirname(system_python)
             python_dlls_dir = os.path.join(python_dir, 'DLLs')
             if not os.path.exists(python_dlls_dir):
                 python_dlls_dir = os.path.join(python_dir, 'Lib', 'DLLs')
-            # ===== 6. 复制 _tkinter.pyd 和 tk 相关库 =====
+            python_libs_dir = os.path.join(python_dir, 'libs')
+            if os.path.exists(python_libs_dir) and os.path.isdir(python_libs_dir):
+                venv_dir = os.path.dirname(venv_python)
+                venv_libs_dir = os.path.join(venv_dir, 'libs')
+                if os.path.exists(venv_libs_dir):
+                    shutil.rmtree(venv_libs_dir, ignore_errors=True)
+                shutil.copytree(python_libs_dir, venv_libs_dir)        
+            else:
+                # 尝试从 Python 的 Lib 目录下找
+                python_libs_dir_alt = os.path.join(python_dir, 'Lib', 'libs')
+                if os.path.exists(python_libs_dir_alt) and os.path.isdir(python_libs_dir_alt):
+                    venv_dir = os.path.dirname(venv_python)
+                    venv_libs_dir = os.path.join(venv_dir, 'libs')
+                    if os.path.exists(venv_libs_dir):
+                        shutil.rmtree(venv_libs_dir, ignore_errors=True)
+                    shutil.copytree(python_libs_dir_alt, venv_libs_dir)
+            python_include_dir = os.path.join(python_dir, 'include')
+            if os.path.exists(python_include_dir) and os.path.isdir(python_include_dir):
+                venv_dir = os.path.dirname(venv_python)
+                venv_include_dir = os.path.join(venv_dir, 'include')
+                if os.path.exists(venv_include_dir):
+                    shutil.rmtree(venv_include_dir, ignore_errors=True)
+                shutil.copytree(python_include_dir, venv_include_dir)     
+            else:
+                # 尝试从 Python 的 Lib 目录下找 include
+                python_include_dir_alt = os.path.join(python_dir, 'Lib', 'include')
+                if os.path.exists(python_include_dir_alt) and os.path.isdir(python_include_dir_alt):
+                    venv_dir = os.path.dirname(venv_python)
+                    venv_include_dir = os.path.join(venv_dir, 'include')
+                    if os.path.exists(venv_include_dir):
+                        shutil.rmtree(venv_include_dir, ignore_errors=True)
+                    shutil.copytree(python_include_dir_alt, venv_include_dir)
             copied_files = []
             # 从 DLLs 目录复制
             if os.path.exists(python_dlls_dir):
@@ -14671,7 +14761,6 @@ class PackageMainWindow(QMainWindow):
                         if not os.path.exists(dest_file):
                             shutil.copy2(src_file, dest_file)
                             copied_files.append(file)
-            # ===== 7. 也从 Python 根目录查找 =====
             for file in os.listdir(python_dir):
                 file_lower = file.lower()
                 if file_lower.startswith('_tkinter') or file_lower.startswith('tcl') or file_lower.startswith('tk'):
@@ -14681,7 +14770,6 @@ class PackageMainWindow(QMainWindow):
                         if not os.path.exists(dest_file):
                             shutil.copy2(src_file, dest_file)
                             copied_files.append(file)
-            # ===== 8. 复制 tcl 目录到虚拟环境根目录 =====
             if sys.platform == 'win32':
                 tcl_paths = []
                 # 在 Python 安装目录下查找
@@ -14702,12 +14790,10 @@ class PackageMainWindow(QMainWindow):
                             shutil.rmtree(venv_tcl, ignore_errors=True)
                         shutil.copytree(tcl_path, venv_tcl)
                         break
-            # ===== 9. 验证复制结果 =====
             for f in copied_files[:10]:
                 self.safe_log(f"   - {f}")
             if len(copied_files) > 10:
                 self.safe_log(f"   ... 还有 {len(copied_files) - 10} 个文件")
-            # 测试导入
             test_result = self._run_hidden(
                 [venv_python, '-c', 'import tkinter; print("Tkinter OK")'],
                 capture_output=True, text=True, timeout=5,
@@ -14718,7 +14804,6 @@ class PackageMainWindow(QMainWindow):
             else:
                 return False
         except Exception as e:
-            import traceback
             self.safe_log(traceback.format_exc())
             return False
 
@@ -14768,7 +14853,7 @@ class PackageMainWindow(QMainWindow):
             'Nuitka': 'nuitka',
             'PyApp': 'pyapp',
             'Py2exe': 'py2exe',
-            'Cx_Freeze': 'cx-freeze',
+            'Cx_Freeze': 'cx_freeze',
             'Pynsist': 'pynsist',
             'PyOxidizer': 'pyoxidizer',
             'Py2app': 'py2app',
@@ -14803,77 +14888,6 @@ class PackageMainWindow(QMainWindow):
             self.safe_log(f"✅ 打包器 {packer_name} 已安装到虚拟环境")
         except Exception as e:
             self.safe_log(f"⚠️ 打包器安装失败: {e}")
-
-    def _do_manage_venv_project(self, venv_dir, script):
-        """为项目创建独立的虚拟环境"""
-        try:
-            py = self.python_path.currentText() if self.python_path.currentText() else sys.executable
-            if not py or not os.path.exists(py):
-                self._venv_log("❌ 未找到 Python")
-                self._venv_finish(False)
-                return
-            self._venv_log(f"📦 创建项目虚拟环境: {self._format_path(venv_dir)}")
-            # 删除旧环境
-            if os.path.exists(venv_dir):
-                if self.stop_venv:
-                    self._venv_log("🛑 用户取消操作")
-                    self._venv_finish(False)
-                    return
-                self._venv_progress(10, "删除旧环境")
-                self._rename_and_delete(venv_dir)
-            if self.stop_venv:
-                self._venv_log("🛑 用户取消操作")
-                self._venv_finish(False)
-                return
-            self._venv_progress(20, "创建虚拟环境")
-            self._venv_log("🔧 创建虚拟环境...")
-            result = self._run_hidden(
-                [py, "-m", "venv", venv_dir],
-                capture_output=True, text=True,
-                startupinfo=get_startupinfo()
-            )
-            if result.returncode != 0:
-                self._venv_log(f"❌ 创建失败: {result.stderr}")
-                self._venv_finish(False)
-                return
-            self._venv_log("✅ 虚拟环境创建成功")
-            self._venv_progress(30, "创建完成")
-            # 获取虚拟环境中的 Python 路径
-            if sys.platform == "win32":
-                venv_py = os.path.join(venv_dir, "Scripts", "python.exe")
-            else:
-                venv_py = os.path.join(venv_dir, "bin", "python")
-            # 切换到虚拟环境Python
-            base_name = os.path.splitext(os.path.basename(script))[0]
-            self._switch_to_venv_python(venv_py, base_name)
-            # 获取需要安装的模块
-            all_modules = list(set(self.analyzed_modules + self.hidden_imports_list))
-            if all_modules:
-                self._venv_log(f"📦 需要安装 {len(all_modules)} 个模块")
-                for i, pkg in enumerate(all_modules):
-                    if self.stop_venv:
-                        self._venv_log("🛑 用户取消安装")
-                        self._venv_finish(False)
-                        return
-                    progress = 30 + int((i + 1) / len(all_modules) * 65)
-                    install_pkg = MODULE_TO_PACKAGE.get(pkg, pkg)
-                    self._venv_progress(progress, f"安装 {install_pkg} ({i + 1}/{len(all_modules)})")
-                    self._venv_log(f"📥 安装 {install_pkg}...")
-                    install_cmd = [venv_py, "-m", "pip", "install", install_pkg, "-i",
-                                "https://pypi.tuna.tsinghua.edu.cn/simple", "-q"]
-                    result = self._run_hidden(install_cmd, capture_output=True, text=True, timeout=180)
-                    if result.returncode == 0:
-                        self._venv_log(f"   ✅ {install_pkg} 安装成功")
-                    else:
-                        self._venv_log(f"   ❌ {install_pkg} 安装失败")
-            # 安装当前打包器到虚拟环境
-            self._install_packers_in_venv(venv_py)
-            self._venv_progress(100, "完成")
-            self._venv_log(f"✅ 项目虚拟环境就绪: {self._format_path(venv_dir)}")
-            self._venv_finish(True)
-        except Exception as e:
-            self._venv_log(f"❌ 管理失败: {e}")
-            self._venv_finish(False)
 
     def _select_output(self):
         dir_path = QFileDialog.getExistingDirectory(self, "选择输出目录", self.dist_dir)
@@ -14942,7 +14956,6 @@ class PackageMainWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "选择UPX", "", "UPX (upx.exe upx);;All Files (*.*)")
         if file_path:
             # 统一将后缀转为 .exe
-            import re
             file_path = re.sub(r'\.exe$', '.exe', file_path, flags=re.IGNORECASE)
             formatted_path = self._format_path(file_path)
             self.upx_path.setText(formatted_path)
@@ -15009,9 +15022,6 @@ class PackageMainWindow(QMainWindow):
 
     def _find_all_python(self):
         """同步查找所有有效的 Python 解释器 - 强制排序：项目venv → 系统 → common_venv"""
-        import shutil
-        import re
-        import glob
         # 存储所有找到的路径
         found_paths = []
         # 1. 查找项目 venv/.venv
@@ -15204,7 +15214,6 @@ class PackageMainWindow(QMainWindow):
             if venv_site and os.path.exists(venv_site) and venv_site not in new_sys_path:
                 new_sys_path.append(venv_site)
         # ===== 替换 sys.path =====
-        import sys
         sys.path = new_sys_path
         # 保存缓存
         self._update_cache_python(new_path)
@@ -15225,7 +15234,7 @@ class PackageMainWindow(QMainWindow):
         QTimer.singleShot(200, lambda: self._display_packer_version_from_cache(current_packer))
 
     def _on_python_selected(self):
-        """用户选择了Python路径（保留用于按钮点击兼容）"""
+        """用户选择了Python路径"""
         if getattr(self, '_refreshing', False):
             return
         path = self.python_path.currentText()
@@ -15237,34 +15246,44 @@ class PackageMainWindow(QMainWindow):
                 if ver:
                     self.python_version.setText(ver)
                     self.status_python.setText(f"🐍 {ver}")
-                    # ===== 更新当前打包器版本显示（从缓存或触发检测）=====
                     current_packer = self.packer_combo.currentText()
                     self._display_packer_version_from_cache(current_packer)
-                    # ===== 如果当前打包器无缓存，触发后台检测 =====
-                    display = self._get_packer_display_name(current_packer)
-                    cache_key = f"{display}@{path}"
-                    if cache_key not in self._packer_versions_cache:
-                        QTimer.singleShot(100, self._detect_all_packer_versions_async)
+                    packer = self.packer_combo.currentText()
+                    current_backend = self.nuitka_backend_combo.currentText() if hasattr(self, 'nuitka_backend_combo') else 'auto'
+                    need_zig = (packer == "Nuitka" and current_backend == "zig")
+                    if need_zig:
+                        env_id = self._get_python_env_id(path)
+                        zig_venvs = self._cached_zig_venvs if hasattr(self, '_cached_zig_venvs') else {}
+                        if env_id in zig_venvs and zig_venvs[env_id].get('has_zig', False):
+                            self.safe_log(f"ℹ️ zig_venvs[{env_id}] 缓存命中")
+                        else:
+                            self._detect_and_save_zig(path)
+                        QTimer.singleShot(0, self._display_compiler_status)
             except Exception:
                 pass
 
     def _detect_all_packer_versions_async(self):
-        """检测当前Python环境下的所有打包器版本（只在缓存没有时检测）"""
+        """检测当前Python环境下的所有打包器版本（修复错误缓存）"""
         python_exe = self.python_path.currentText()
         if not python_exe or not os.path.exists(python_exe):
             return
         if self._detecting_packer_versions:
             return
-        # ===== 检查是否所有打包器都有缓存了 =====
         packers = ["PyInstaller", "Nuitka", "PyApp", "Py2exe", "Cx_Freeze", "Pynsist", "PyOxidizer", "Py2app"]
-        all_cached = True
+        # ===== 找出需要重新检测的打包器 =====
+        missing_packers = []
         for packer in packers:
             cache_key = f"{packer}@{python_exe}"
-            if cache_key not in self._packer_versions_cache:
-                all_cached = False
-                break
-        # ===== 如果都有缓存，直接显示，不检测 =====
-        if all_cached:
+            version = self._packer_versions_cache.get(cache_key)
+            if version is None:
+                missing_packers.append(packer)
+            elif isinstance(version, str):
+                if '\\' in version or '/' in version or '.exe' in version or len(version) > 30:
+                    missing_packers.append(packer)
+                elif version and not version[0].isdigit():
+                    missing_packers.append(packer)
+        # ===== 没有需要检测的，直接显示 =====
+        if not missing_packers:
             current = self.packer_combo.currentText()
             display = self._get_packer_display_name(current)
             cache_key = f"{display}@{python_exe}"
@@ -15273,63 +15292,41 @@ class PackageMainWindow(QMainWindow):
                 self._update_packer_status(display, version or "")
             return
         self._detecting_packer_versions = True
+        self.safe_log(f"🔍 检测打包器: {', '.join(missing_packers)}")
 
         def detect():
             try:
-                detected_count = 0
-                results = {}
-                # 保留其他Python环境的缓存
+                # ===== 读取现有缓存 =====
                 try:
                     with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
-                        old_cache = json.load(f)
-                        old_versions = old_cache.get('packer_versions', {})
-                        for key, value in old_versions.items():
-                            if '@' in key:
-                                py_path = key.split('@', 1)[1]
-                                if py_path != python_exe:
-                                    results[key] = value
-                except Exception:
-                    pass
-                # ===== 只检测缺失的打包器 =====
-                missing_packers = []
-                for packer in packers:
-                    cache_key = f"{packer}@{python_exe}"
-                    if cache_key not in self._packer_versions_cache:
-                        missing_packers.append(packer)
-                if not missing_packers:
-                    self._detecting_packer_versions = False
-                    return
+                        cache_data = json.load(f)
+                except:
+                    cache_data = {}
+                if 'packer_versions' not in cache_data:
+                    cache_data['packer_versions'] = {}
+                # ===== 只检测缺失或错误的打包器，保留其他 =====
                 for packer in missing_packers:
                     cache_key = f"{packer}@{python_exe}"
                     version = self._check_packer_version(packer, python_exe)
-                    results[cache_key] = version
                     if version:
-                        detected_count += 1
+                        cache_data['packer_versions'][cache_key] = version
                         self.safe_log(f"  ✅ {packer}: {version}")
                     else:
+                        # 未安装的包，从缓存中移除
+                        cache_data['packer_versions'].pop(cache_key, None)
                         self.safe_log(f"  ❌ {packer}: 未安装")
-                # 更新内存缓存
-                self._packer_versions_cache.update(results)
+                # ===== 更新内存缓存 =====
+                self._packer_versions_cache.update(cache_data['packer_versions'])
                 self._packer_versions_detected = True
                 self._packer_cache_loaded = True
-                # 保存到文件缓存
-                try:
-                    cache_data = {}
-                    if os.path.exists(self.global_cache_file):
-                        with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
-                            cache_data = json.load(f)
-                    if 'packer_versions' not in cache_data:
-                        cache_data['packer_versions'] = {}
-                    cache_data['packer_versions'].update(results)
-                    with open(self.global_cache_file, 'w', encoding='utf-8-sig') as f:
-                        json.dump(cache_data, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
-                # 更新UI
+                # ===== 写入文件 =====
+                with open(self.global_cache_file, 'w', encoding='utf-8-sig') as f:
+                    json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                # ===== 更新UI =====
                 current = self.packer_combo.currentText()
                 display = self._get_packer_display_name(current)
                 cache_key = f"{display}@{python_exe}"
-                version = results.get(cache_key)
+                version = cache_data['packer_versions'].get(cache_key)
                 if version is not None:
                     self.packer_ver_signal.emit(display, version or "")
             except Exception as e:
@@ -15398,7 +15395,7 @@ class PackageMainWindow(QMainWindow):
             self.safe_log(f"⚠️ 解析导入失败: {e}")
         return imports
 
-    def _build_exclude_list_from_analysis(self):
+    def _build_exclude_list_from_analysis(self, progress_callback=None):
         """构建排除列表（保留原始大小写，显示完整信息）"""
         if self._building_exclude:
             return
@@ -15406,12 +15403,10 @@ class PackageMainWindow(QMainWindow):
         try:
             if not self.analyzed_modules:
                 return
-            # ===== 获取用户手动排除的 =====
             manual_excludes_lower = set()
             if hasattr(self, 'manual_exclude_list'):
                 for pkg in self.manual_exclude_list:
                     manual_excludes_lower.add(pkg.lower())
-            # ===== 获取已安装的包 =====
             python_exe = self.python_path.currentText()
             if not python_exe or not os.path.exists(python_exe):
                 python_exe = sys.executable
@@ -15419,12 +15414,19 @@ class PackageMainWindow(QMainWindow):
             if not installed_lower_map:
                 self.safe_log("⚠️ 无法获取已安装包列表，跳过排除构建")
                 return
-            # ===== 获取真实导入和附属依赖 =====
             real_imports = self.real_imports if hasattr(self, 'real_imports') else []
             extra_deps = self.extra_deps if hasattr(self, 'extra_deps') else []
-            # ===== 需要自动保留的包 =====
+            # 每次重新分析时，先清理上次闭包添加到 hidden_imports_list 的残留
+            old_closure_deps = getattr(self, '_closure_only_deps', set())
+            if old_closure_deps:
+                self.hidden_imports_list = [m for m in self.hidden_imports_list if m.lower().replace('-', '_') not in old_closure_deps]
+                if hasattr(self, 'hidden_listbox'):
+                    self.hidden_listbox.clear()
+                    for m in sorted(set(self.hidden_imports_list)):
+                        self.hidden_listbox.addItem(QListWidgetItem(m))
+                if hasattr(self, 'auto_import_count_label'):
+                    self.auto_import_count_label.setText(f"({len(self.hidden_imports_list)})")
             needed_lower = set()
-            # 1. 从 real_imports 添加
             for mod in real_imports:
                 if mod in STANDARD_LIBS:
                     continue
@@ -15436,17 +15438,68 @@ class PackageMainWindow(QMainWindow):
                     pkg = MODULE_TO_PACKAGE.get(mod, mod)
                     needed_lower.add(pkg.lower())
                 needed_lower.add(mod_lower)
-            # 2. 从 extra_deps 添加
-            for dep in extra_deps:
-                dep_lower = dep.lower()
-                if dep_lower in DEPENDENCY_MAP:
-                    for pkg in DEPENDENCY_MAP[dep_lower]:
+            # 初始化：未勾选时清空闭包专属依赖
+            if not (hasattr(self, 'dep_closure_cb') and self.dep_closure_cb.isChecked()):
+                self._closure_only_deps = set()
+            if hasattr(self, 'dep_closure_cb') and self.dep_closure_cb.isChecked():
+                self.safe_log("🔗 正在解析依赖闭包（递归展开所有传递依赖）...")
+                self.status_label.setText("⏳ 扫描元数据...")
+                self.status_progress.setVisible(True)
+                self.status_progress.setRange(0, 100)
+                try:
+                    pkg_names = []
+                    for mod in list(needed_lower):
+                        pkg = MODULE_TO_PACKAGE.get(mod, mod)
+                        pkg_names.append(pkg.lower())
+                    closure = self._expand_dependency_closure(
+                        python_exe, pkg_names, progress_callback=progress_callback
+                    )
+                    self._closure_only_deps = set()
+                    if closure:
+                        existing_lower = set(needed_lower)
+                        new_deps_display = []
+                        for dep in closure:
+                            dep_lower = dep.lower()
+                            if dep_lower in NEVER_PACK:
+                                continue
+                            if dep_lower not in existing_lower:
+                                self._closure_only_deps.add(dep_lower)
+                                original_name = installed_lower_map.get(dep_lower, dep)
+                                new_deps_display.append(original_name)
+                                if original_name not in self.hidden_imports_list:
+                                    self.hidden_imports_list.append(original_name)
+                        if hasattr(self, 'hidden_listbox') and new_deps_display:
+                            self.hidden_listbox.clear()
+                            for m in sorted(set(self.hidden_imports_list)):
+                                self.hidden_listbox.addItem(QListWidgetItem(m))
+                        if hasattr(self, 'auto_import_count_label'):
+                            self.auto_import_count_label.setText(f"({len(self.hidden_imports_list)})")
+                        if new_deps_display:
+                            display_str = ', '.join(sorted(new_deps_display)[:15])
+                            if len(new_deps_display) > 15:
+                                display_str += f' ... 等 {len(new_deps_display)} 个'
+                            self.safe_log(f"📦 新增传递依赖 {len(new_deps_display)} 个: {display_str}")
+                except Exception as e:
+                    self.safe_log(f"⚠️ 依赖闭包展开失败: {e}")
+                    if progress_callback:
+                        progress_callback(0)
+                    self._closure_only_deps = set()
+                    for mod, deps in DEPENDENCY_MAP.items():
+                        if mod in real_imports:
+                            for dep in deps:
+                                if dep not in NEVER_PACK:
+                                    needed_lower.add(dep.lower())
+            else:
+                self._closure_only_deps = set()
+                for dep in extra_deps:
+                    dep_lower = dep.lower()
+                    if dep_lower in DEPENDENCY_MAP:
+                        for pkg in DEPENDENCY_MAP[dep_lower]:
+                            needed_lower.add(pkg.lower())
+                    else:
+                        pkg = MODULE_TO_PACKAGE.get(dep, dep)
                         needed_lower.add(pkg.lower())
-                else:
-                    pkg = MODULE_TO_PACKAGE.get(dep, dep)
-                    needed_lower.add(pkg.lower())
-                needed_lower.add(dep_lower)
-            # 3. 从 hidden_imports_list 添加
+                    needed_lower.add(dep_lower)
             for mod in self.hidden_imports_list:
                 if mod in STANDARD_LIBS:
                     continue
@@ -15458,7 +15511,6 @@ class PackageMainWindow(QMainWindow):
                     pkg = MODULE_TO_PACKAGE.get(mod, mod)
                     needed_lower.add(pkg.lower())
                 needed_lower.add(mod_lower)
-            # 4. 从 analyzed_modules 添加（兜底）
             for mod in self.analyzed_modules:
                 if mod in STANDARD_LIBS:
                     continue
@@ -15470,15 +15522,22 @@ class PackageMainWindow(QMainWindow):
                     pkg = MODULE_TO_PACKAGE.get(mod, mod)
                     needed_lower.add(pkg.lower())
                 needed_lower.add(mod_lower)
-            # 5. RUNTIME_SAFE_KEEP
             for keep in RUNTIME_SAFE_KEEP:
                 needed_lower.add(keep.lower())
                 needed_lower.add(keep.lower().replace('_', '-'))
                 needed_lower.add(keep.lower().replace('-', '_'))
             def _is_needed(pkg_lower):
-                return (pkg_lower in needed_lower
+                if (pkg_lower in needed_lower
                         or pkg_lower.replace('-', '_') in needed_lower
-                        or pkg_lower.replace('_', '-') in needed_lower)
+                        or pkg_lower.replace('_', '-') in needed_lower):
+                    return True
+                closure_deps = getattr(self, '_closure_only_deps', set())
+                if closure_deps:
+                    if (pkg_lower in closure_deps
+                            or pkg_lower.replace('-', '_') in closure_deps
+                            or pkg_lower.replace('_', '-') in closure_deps):
+                        return True
+                return False
             auto_exclude_enabled = self.auto_exclude_cb.isChecked() if hasattr(self, 'auto_exclude_cb') else True
             exclude = []
             keep_packages = {}
@@ -15498,7 +15557,6 @@ class PackageMainWindow(QMainWindow):
                         continue
                     if _is_needed(pkg_lower):
                         reasons = set()
-                        # ===== 1. 导入依赖 =====
                         if pkg_lower in real_imports_lower:
                             reasons.add("导入依赖")
                         else:
@@ -15506,17 +15564,15 @@ class PackageMainWindow(QMainWindow):
                                 if MODULE_TO_PACKAGE.get(mod, '').lower() == pkg_lower:
                                     reasons.add("导入依赖")
                                     break
-                        # ===== 2. 附属依赖 =====
                         if "导入依赖" not in reasons:
                             if pkg_lower in extra_deps_lower:
-                                reasons.add("附属依赖")
+                                reasons.add("传递依赖")
                             else:
                                 for dep in extra_deps:
                                     if MODULE_TO_PACKAGE.get(dep, '').lower() == pkg_lower:
-                                        reasons.add("附属依赖")
+                                        reasons.add("传递依赖")
                                         break
-                        # ===== 3. 其他保留原因 =====
-                        if "导入依赖" not in reasons and "附属依赖" not in reasons:
+                        if "导入依赖" not in reasons and "传递依赖" not in reasons:
                             if pkg_lower in RUNTIME_SAFE_KEEP or pkg_lower.replace('-', '_') in RUNTIME_SAFE_KEEP:
                                 reasons.add("运行必需")
                             for mod, deps in DEPENDENCY_MAP.items():
@@ -15534,15 +15590,13 @@ class PackageMainWindow(QMainWindow):
                 for pkg_lower in manual_excludes_lower:
                     if pkg_lower in installed_lower_map:
                         exclude.append(installed_lower_map[pkg_lower])
-            # ===== 按原因分类统计 =====
             keep_by_reason = {}
             for pkg, reasons in keep_packages.items():
                 for reason in reasons:
                     if reason not in keep_by_reason:
                         keep_by_reason[reason] = []
                     keep_by_reason[reason].append(pkg)
-            # ===== 更新界面 =====
-            exclude_unique = list(set(exclude))
+            exclude_unique = sorted(set(exclude))
             self.exclude_list = exclude_unique
             self.exclude_listbox.clear()
             for m in sorted(exclude_unique):
@@ -15551,17 +15605,13 @@ class PackageMainWindow(QMainWindow):
                 item.setCheckState(Qt.CheckState.Unchecked)
                 self.exclude_listbox.addItem(item)
             self._update_exclude_count()
-            # ===== 计算总数 =====
             total_installed = len(installed_lower_map)
             total_excluded = len(exclude_unique)
             total_kept = len(keep_packages)
             total_other = len(other_packages)
             total_manual = len(manual_excludes_lower)
-            total_auto = total_excluded - total_manual
-            # ===== 自洽修正 =====
             diff = total_installed - (total_excluded + total_kept + total_other)
             if diff != 0:
-                # 把差值归入"其他未分类"
                 if "其他分类" not in keep_by_reason:
                     keep_by_reason["其他分类"] = []
                 classified_packages = set(exclude_unique) | set(keep_packages.keys()) | set(other_packages)
@@ -15572,56 +15622,17 @@ class PackageMainWindow(QMainWindow):
                             keep_packages[pkg_original] = {"其他分类"}
                 total_kept = len(keep_packages)
                 total_other = len(other_packages)
-            # ===== 显示日志 =====
             if real_imports:
                 self.safe_log(f"📦 导入依赖 {len(real_imports)} 个: {', '.join(sorted(real_imports))}")
             if extra_deps:
-                self.safe_log(f"📦 附属依赖 {len(extra_deps)} 个: {', '.join(sorted(extra_deps))}")
-            if total_manual > 0:
-                self.safe_log(f"📊 手动排除 {total_manual} 个包")
-            #if auto_exclude_enabled and total_auto > 0:
-                #self.safe_log(f"📊 自动排除 {total_auto} 个包")
-            if keep_by_reason:
-                #self.safe_log(f"📋 保留包分类 ({total_kept} 个):")
-                reason_order = ["导入依赖", "附属依赖", "运行必需", "依赖关联", "包名映射", "预制保留", "其他分类"]
-                for reason in reason_order:
-                    if reason in keep_by_reason:
-                        unique_packages = list(set(keep_by_reason[reason]))
-                        display = ', '.join(sorted(unique_packages)[:10])
-                        if len(unique_packages) > 10:
-                            display += f' ... 等 {len(unique_packages)} 个'
-                        #self.safe_log(f"   📌 {reason}: {len(unique_packages)} 个: {display}")
-                #self.safe_log(f"📊 总计保留: {total_kept} 个包（去重后）")
-            if other_packages:
-                display = ', '.join(sorted(other_packages)[:10])
-                if len(other_packages) > 10:
-                    display += f' ... 等 {len(other_packages)} 个'
-                #self.safe_log(f"📌 预排列表 (NEVER_PACK): {len(other_packages)} 个: {display}")
-            # ===== 最终自洽验证 =====
-            final_total = total_excluded + len(keep_packages) + len(other_packages)
-            #self.safe_log(f"📊 自洽验证: 已安装 {total_installed} = 排除 {total_excluded} + 保留 {len(keep_packages)} + 其他 {len(other_packages)}")
-            if total_installed == final_total:
-                pass
-                #self.safe_log(f"✅ 数量完全自洽")
-            else:
-                # 极端情况：如果还不自洽，强制修正
-                remaining = total_installed - total_excluded - len(other_packages)
-                if remaining > 0:
-                    if "其他分类" not in keep_by_reason:
-                        keep_by_reason["其他分类"] = []
-                    classified = set(exclude_unique) | set(keep_packages.keys()) | set(other_packages)
-                    for pkg_lower, pkg_original in installed_lower_map.items():
-                        if pkg_original not in classified:
-                            keep_by_reason["其他分类"].append(pkg_original)
-                            if pkg_original not in keep_packages:
-                                keep_packages[pkg_original] = {"其他分类"}
-                #self.safe_log(f"✅ 已自动修正，数量完全自洽")
+                self.safe_log(f"📦 传递依赖 {len(extra_deps)} 个: {', '.join(sorted(extra_deps))}")
             if exclude_unique:
                 preview = ', '.join(sorted(exclude_unique)[:20])
                 if len(exclude_unique) > 20:
                     preview += f' ... 等 {len(exclude_unique)} 个'
                 self.safe_log(f"🚫 排除列表: {preview}")
         finally:
+            self.hidden_imports_list = sorted(set(self.hidden_imports_list))
             self._building_exclude = False
 
     def _on_auto_exclude_toggled(self, state):
@@ -15636,7 +15647,6 @@ class PackageMainWindow(QMainWindow):
 
     def _analyze_used(self, script_path, auto_add=True):
         """分析脚本依赖 - 返回 (result, real_imports, extra_deps, uses_tkinter)"""
-        # ===== 防止短时间内重复分析同一个文件 =====
         current_time = time.time()
         if hasattr(self, '_last_analyzed_file') and self._last_analyzed_file == script_path:
             if current_time - getattr(self, '_last_analyzed_time', 0) < 2:
@@ -15651,66 +15661,55 @@ class PackageMainWindow(QMainWindow):
         imports = set()
         uses_tkinter = False
         # ===== 1. AST 解析所有 import =====
-        try:
-            tree = ast.parse(source)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        mod = alias.name.split('.')[0]
-                        if mod == 'tkinter':
-                            uses_tkinter = True
-                            imports.add('tk')
-                        elif mod == 'tk':
-                            imports.add('tk')
-                        elif mod not in STANDARD_LIBS:
-                            imports.add(mod)
-                elif isinstance(node, ast.ImportFrom):
-                    if node.module:
-                        mod = node.module.split('.')[0]
-                        if mod == 'tkinter':
-                            uses_tkinter = True
-                            imports.add('tk')
-                        elif mod == 'tk':
-                            imports.add('tk')
-                        elif mod not in STANDARD_LIBS:
-                            imports.add(mod)
-        except Exception as e:
-            self.safe_log(f"⚠️ AST解析失败: {e}")
-            import re
-            for line in source.split('\n'):
-                line = line.strip()
-                if line.startswith('import ') or line.startswith('from '):
-                    if 'tkinter' in line:
-                        uses_tkinter = True
-                        imports.add('tk')
-                    else:
-                        match = re.match(r'(?:from\s+(\S+)\s+import|import\s+(\S+))', line)
-                        if match:
-                            mod = match.group(1) or match.group(2)
-                            if mod:
-                                mod = mod.split('.')[0]
-                                if mod not in STANDARD_LIBS:
-                                    imports.add(mod)
+        imports, uses_tkinter = scan_imports_from_source(
+            source, on_parse_error=lambda e: self.safe_log(f"⚠️ AST解析失败: {e}"))
         result = []
         for mod in sorted(imports):
             mod_clean = mod.split('==')[0].split(' ')[0].strip()
-            if mod_clean and mod_clean not in FILTER_MODULES:
+            mod_lower = mod_clean.lower()
+            if mod_clean and mod_lower not in FILTER_MODULES and mod_lower not in NEVER_PACK:
                 if mod_clean not in result:
                     result.append(mod_clean)
         # ===== 3. 确保 tk 在结果中 =====
         if uses_tkinter and 'tk' not in result:
             result.append('tk')
-        # ===== 4. 自动补充隐式依赖 =====
-        # 保存真实导入（原始 result）
+        # ===== 4. 自动补充传递依赖 =====
         real_imports = result.copy()
-        # 添加附属依赖到 result
         extra_deps = set()
-        for mod, deps in DEPENDENCY_MAP.items():
-            if mod in result:
-                for dep in deps:
+        # ===== 如果开启依赖闭包，递归展开所有传递依赖 =====
+        if hasattr(self, 'dep_closure_cb') and self.dep_closure_cb.isChecked():
+            try:
+                target_python = self.python_path.currentText() or sys.executable
+                self.safe_log("🔗 正在递归解析传递依赖...")
+                closure = self._expand_dependency_closure(target_python, result)
+                for dep in closure:
+                    # ===== 过滤 NEVER_PACK =====
+                    if dep in NEVER_PACK:
+                        continue
                     if dep not in result:
                         result.append(dep)
                         extra_deps.add(dep)
+                self.safe_log(f"✅ 传递依赖展开完成，共 {len(result)} 个包")
+            except Exception as e:
+                self.safe_log(f"⚠️ 传递依赖展开失败，回退到静态表: {e}")
+                for mod, deps in DEPENDENCY_MAP.items():
+                    if mod in result:
+                        for dep in deps:
+                            if dep in NEVER_PACK:
+                                continue
+                            if dep not in result:
+                                result.append(dep)
+                                extra_deps.add(dep)
+        else:
+            # ===== 开关关闭时，使用静态表 =====
+            for mod, deps in DEPENDENCY_MAP.items():
+                if mod in result:
+                    for dep in deps:
+                        if dep in NEVER_PACK:
+                            continue
+                        if dep not in result:
+                            result.append(dep)
+                            extra_deps.add(dep)
         self.analyzed_modules = result
         self.real_imports = real_imports
         self.extra_deps = list(extra_deps)
@@ -15740,7 +15739,7 @@ class PackageMainWindow(QMainWindow):
                     extra_display = ', '.join(sorted(extra_deps)[:10])
                     if len(extra_deps) > 10:
                         extra_display += f' ... 等 {len(extra_deps)} 个'
-                    self.safe_log(f"📦 附属依赖 {len(extra_deps)} 个: {extra_display}")
+                    self.safe_log(f"📦 传递依赖 {len(extra_deps)} 个: {extra_display}")
                 total = len(result)
                 self.safe_log(f"📦 隐藏导入总计 {total} 个")
                 if not self.use_venv:
@@ -15753,45 +15752,60 @@ class PackageMainWindow(QMainWindow):
         """检查并安装缺失的依赖"""
         if hasattr(self, '_deps_installing') and self._deps_installing:
             return
-        # ===== 获取当前选中的 Python =====
         python_exe = self.python_path.currentText()
         if not python_exe or not os.path.exists(python_exe):
             python_exe = sys.executable
         self.safe_log(f"🔍 使用Python: {python_exe}")
         self._deps_installing = True
         self.status_start("检查依赖", color="blue")
-        # ===== 获取已安装的包 =====
         installed_lower_map = self._get_installed_packages(python_exe)
         if not installed_lower_map:
             self.safe_log("⚠️ 无法获取已安装包列表")
             self._deps_installing = False
             return
-        # ===== 构建需要的包列表 =====
         needed = set()
         real_imports = self.real_imports if hasattr(self, 'real_imports') else []
-        for mod in real_imports:
-            if mod in STANDARD_LIBS:
-                continue
-            mod_lower = mod.lower()
-            if mod_lower in DEPENDENCY_MAP:
-                for pkg in DEPENDENCY_MAP[mod_lower]:
-                    if pkg:
-                        needed.add(pkg)
-            else:
-                pkg = MODULE_TO_PACKAGE.get(mod, mod)
-                needed.add(pkg.lower())
-        for mod in self.hidden_imports_list:
-            if mod in STANDARD_LIBS:
-                continue
-            mod_lower = mod.lower()
-            if mod_lower in DEPENDENCY_MAP:
-                for pkg in DEPENDENCY_MAP[mod_lower]:
-                    if pkg:
-                        needed.add(pkg)
-            else:
-                pkg = MODULE_TO_PACKAGE.get(mod, mod)
-                needed.add(pkg.lower())
-        # ===== 找出缺失的 =====
+        if hasattr(self, 'dep_closure_cb') and self.dep_closure_cb.isChecked():
+            try:
+                self.safe_log("🔗 正在递归解析传递依赖...")
+                closure = self._expand_dependency_closure(python_exe, real_imports)
+                for dep in closure:
+                    # ===== 过滤永远排除的包 =====
+                    if dep in NEVER_PACK:
+                        continue
+                    needed.add(dep)
+                self.safe_log(f"✅ 传递依赖展开完成，共 {len(needed)} 个包")
+            except Exception as e:
+                self.safe_log(f"⚠️ 传递依赖展开失败，回退到静态表: {e}")
+                for mod in real_imports:
+                    if mod in STANDARD_LIBS:
+                        continue
+                    if mod in NEVER_PACK:
+                        continue
+                    mod_lower = mod.lower()
+                    if mod_lower in DEPENDENCY_MAP:
+                        for pkg in DEPENDENCY_MAP[mod_lower]:
+                            if pkg and pkg not in NEVER_PACK:
+                                needed.add(pkg)
+                    else:
+                        pkg = MODULE_TO_PACKAGE.get(mod, mod)
+                        if pkg and pkg.lower() not in NEVER_PACK:
+                            needed.add(pkg.lower())
+        else:
+            for mod in real_imports:
+                if mod in STANDARD_LIBS:
+                    continue
+                if mod in NEVER_PACK:
+                    continue
+                mod_lower = mod.lower()
+                if mod_lower in DEPENDENCY_MAP:
+                    for pkg in DEPENDENCY_MAP[mod_lower]:
+                        if pkg and pkg not in NEVER_PACK:
+                            needed.add(pkg)
+                else:
+                    pkg = MODULE_TO_PACKAGE.get(mod, mod)
+                    if pkg and pkg.lower() not in NEVER_PACK:
+                        needed.add(pkg.lower())
         missing = []
         for pkg_lower in needed:
             if pkg_lower not in installed_lower_map:
@@ -15802,7 +15816,6 @@ class PackageMainWindow(QMainWindow):
             self.status_finish("就绪")
             return
         self.safe_log(f"📦 安装 {len(missing)} 个缺失依赖: {', '.join(missing)}")
-        # ===== 安装线程 =====
         class InstallDepsThread(QThread):
             log_signal = pyqtSignal(str)
             progress_signal = pyqtSignal(int)
@@ -15820,18 +15833,8 @@ class PackageMainWindow(QMainWindow):
                 total = len(self.packages)
                 for i, pkg_lower in enumerate(self.packages):
                     install_pkg = pkg_lower
-                    if pkg_lower == 'pylibrehardwaremonitor':
-                        install_pkg = 'PyLibreHardwareMonitor'
-                    elif pkg_lower == 'pylibrehardwaremonitorlib':
-                        install_pkg = 'PyLibreHardwareMonitorLib'
-                    elif pkg_lower == 'pythonnet':
-                        install_pkg = 'pythonnet'
-                    elif pkg_lower == 'pillow':
-                        install_pkg = 'Pillow'
-                    elif pkg_lower == 'pyqt6':
-                        install_pkg = 'PyQt6'
-                    elif pkg_lower == 'psutil':
-                        install_pkg = 'psutil'
+                    if pkg_lower == 'pil':
+                        install_pkg = 'pillow'
                     elif pkg_lower == 'docx':
                         install_pkg = 'python-docx'
                     self.status_signal.emit(f"安装 {install_pkg} ({i+1}/{total})")
@@ -15857,38 +15860,6 @@ class PackageMainWindow(QMainWindow):
         self.deps_thread.status_signal.connect(self._on_deps_status)
         self.deps_thread.finished_signal.connect(self._on_deps_finished)
         self.deps_thread.start()
-
-    def _refresh_after_env_change(self):
-        """虚拟环境切换后，后台异步刷新分析和排除列表"""
-        script = self.input_file.text()
-        if not script or not os.path.exists(script):
-            return
-        if getattr(self, '_refreshing', False):
-            return
-        self._refreshing = True
-
-        def async_refresh():
-            try:
-                self._analyze_used(script, auto_add=False)
-            except Exception as e:
-                pass
-            finally:
-                self._refreshing = False
-        threading.Thread(target=async_refresh, daemon=True).start()
-
-    def _update_progress_ui(self, value):
-        """更新进度UI（主线程）"""
-        self.status_progress.setValue(value)
-        self.status_pct.setText(f"{value}%")
-        QApplication.processEvents()
-
-    def _finish_refresh_ui(self):
-        """刷新完成UI（主线程）"""
-        self.status_progress.setVisible(False)
-        self.status_pct.setVisible(False)
-        self.status_label.setText("就绪")
-        self.status_progress.setValue(0)
-        self.safe_log("✅ 环境分析完成，排除列表已更新")
 
     def _detect_gui_from_hidden(self):
         """从隐藏导入列表检测GUI框架并强制更新下拉框"""
@@ -15926,181 +15897,24 @@ class PackageMainWindow(QMainWindow):
             if hasattr(self, 'gui_display_label'):
                 self.gui_display_label.setText("")
 
-    def _detect_gui_framework(self, mod, gui_flags):
-        """检测模块是否属于GUI框架"""
-        mod_lower = mod.lower()
-        # PyQt6
-        if mod_lower == 'pyqt6' or mod_lower.startswith('pyqt6.'):
-            gui_flags['pyqt6'] = True
-        # PyQt5
-        elif mod_lower == 'pyqt5' or mod_lower.startswith('pyqt5.'):
-            gui_flags['pyqt5'] = True
-        # PySide6
-        elif mod_lower == 'pyside6' or mod_lower.startswith('pyside6.'):
-            gui_flags['pyside6'] = True
-        # PySide2
-        elif mod_lower == 'pyside2' or mod_lower.startswith('pyside2.'):
-            gui_flags['pyside2'] = True
-        # PySide (通用)
-        elif mod_lower == 'pyside' or mod_lower.startswith('pyside.'):
-            gui_flags['pyside'] = True
-        # tkinter
-        elif mod_lower == 'tkinter' or mod_lower.startswith('tkinter.'):
-            gui_flags['tk-inter'] = True
-        elif mod_lower == 'tk':
-            gui_flags['tk-inter'] = True
-        # wxPython
-        elif mod_lower == 'wx' or mod_lower.startswith('wx.'):
-            gui_flags['wx'] = True
-        # Kivy
-        elif mod_lower == 'kivy' or mod_lower.startswith('kivy.'):
-            gui_flags['kivy'] = True
-
-    def _auto_update_gui_plugin(self, gui_flags):
-        """根据检测到的GUI框架自动更新Nuitka GUI插件"""
-        if not hasattr(self, 'nuitka_gui_plugin_combo'):
-            return
-        # ===== 映射：检测标志 -> 下拉框值 =====
-        plugin_map = {
-            'pyqt6': 'pyqt6',
-            'pyside6': 'pyside6',
-            'pyqt5': 'pyqt5',
-            'pyside2': 'pyside2',
-            'tkinter': 'tk-inter',
-            'tk': 'tk-inter',
-            'wx': 'wxpython',
-            'kivy': 'kivy',
-        }
-        # ===== 按优先级检测 =====
-        detected = None
-        plugin_name = None
-        # 优先级：PyQt6 > PySide6 > PyQt5 > PySide2 > Tkinter > wxPython > Kivy
-        if gui_flags.get('pyqt6', False):
-            detected = 'PyQt6'
-            plugin_name = 'pyqt6'
-        elif gui_flags.get('pyside6', False):
-            detected = 'PySide6'
-            plugin_name = 'pyside6'
-        elif gui_flags.get('pyqt5', False):
-            detected = 'PyQt5'
-            plugin_name = 'pyqt5'
-        elif gui_flags.get('pyside2', False):
-            detected = 'PySide2'
-            plugin_name = 'pyside2'
-        elif gui_flags.get('pyside', False):
-            # 检测到通用的PySide，默认使用PySide6
-            detected = 'PySide'
-            plugin_name = 'pyside6'
-            self.safe_log("⚠️ 检测到 PySide，默认使用 PySide6 插件")
-        elif gui_flags.get('tkinter', False):
-            detected = 'tkinter'
-            plugin_name = 'tk-inter'
-        elif gui_flags.get('tk', False):
-            detected = 'tk'
-            plugin_name = 'tk-inter'
-        elif gui_flags.get('wx', False):
-            detected = 'wxPython'
-            plugin_name = 'wxpython'
-        elif gui_flags.get('kivy', False):
-            detected = 'Kivy'
-            plugin_name = 'kivy'
-        # ===== 更新UI =====
-        if plugin_name:
-            # 检查下拉框中是否存在该值
-            index = self.nuitka_gui_plugin_combo.findText(plugin_name)
-            if index < 0:
-                self.safe_log(f"⚠️ 插件 '{plugin_name}' 不在下拉列表中")
-                return
-            # 只有当前是 'auto' 或者与检测到的不一致时才更新
-            current = self.nuitka_gui_plugin_combo.currentText()
-            if current == 'auto' or current != plugin_name:
-                self.nuitka_gui_plugin_combo.blockSignals(True)
-                self.nuitka_gui_plugin_combo.setCurrentIndex(index)
-                self.nuitka_gui_plugin_combo.blockSignals(False)
-                # 更新显示标签
-                if hasattr(self, 'gui_display_label'):
-                    self.gui_display_label.setText(f"✅ {detected}")
-                    self.gui_display_label.setStyleSheet("color: green; font-weight: bold;")
-                self.safe_log(f"🔄 GUI插件已自动更新为: {plugin_name} ({detected})")
-            else:
-                if hasattr(self, 'gui_display_label'):
-                    self.gui_display_label.setText(f"✅ {detected}")
-                    self.gui_display_label.setStyleSheet("color: green;")
-        else:
-            # 没有检测到GUI框架
-            if hasattr(self, 'gui_display_label'):
-                self.gui_display_label.setText("ℹ️ 未检测到GUI框架")
-                self.gui_display_label.setStyleSheet("color: gray;")
-            # 如果当前是 'auto'，保持不变
-            if self.nuitka_gui_plugin_combo.currentText() == 'auto':
-                pass
-
-    def _update_gui_plugin_for_nuitka(self):
-        """在Nuitka打包前，确保GUI插件正确设置"""
-        if not hasattr(self, 'nuitka_gui_plugin_combo'):
-            return
-        if self.nuitka_gui_plugin_combo.currentText() == 'auto':
-            script = self.input_file.text()
-            if script and os.path.exists(script):
-                self.safe_log("🔍 自动检测GUI框架...")
-                self._analyze_used(script, auto_add=False)
-            else:
-                self.safe_log("⚠️ 未选择脚本，无法自动检测GUI")
-
-    def _check_tkinter_usage(self, script_path):
-        """检测脚本是否真正使用了 tkinter """
-        try:
-            with open(script_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
-                source = f.read()
-            import re
-            uses_tkinter = False
-            for line in source.split('\n'):
-                line = line.strip()
-                if line.startswith('#'):
-                    continue
-                if line.startswith('import tkinter') or line.startswith('from tkinter'):
-                    uses_tkinter = True
-                    break
-            if uses_tkinter:
-                self.safe_log("🖥️ 检测到 tkinter import")
-                if 'tk' not in self.hidden_imports_list:
-                    self.hidden_imports_list.append('tk')
-                    self.hidden_listbox.addItem('tk')
-                    self._update_hidden_count()
-                if hasattr(self, 'nuitka_gui_plugin_combo'):
-                    if self.nuitka_gui_plugin_combo.currentText() != 'tk-inter':
-                        self.nuitka_gui_plugin_combo.setCurrentText('tk-inter')
-                return True
-            return False
-        except Exception as e:
-            self.safe_log(f"⚠️ tkinter 检测失败: {e}")
-            return False
-
-    def _is_internal_module(self, mod):
-        """判断是否是Python内部模块（跨平台）"""
-        if sys.platform == 'win32':
-            win_modules = {'winreg', 'msvcrt', 'ctypes.wintypes', 'pywin32', 'win32api', 'win32con'}
-            if mod in win_modules:
-                return True
-        if sys.platform.startswith('linux'):
-            linux_modules = {'fcntl', 'grp', 'pwd', 'resource', 'syslog'}
-            if mod in linux_modules:
-                return True
-        if sys.platform == 'darwin':
-            mac_modules = {'Carbon', 'Cocoa', 'Quartz', 'ScriptingBridge', 'pyobjc'}
-            if mod in mac_modules:
-                return True
-        return False
-
     def _analyze_missing(self, script_path):
         used = self._analyze_used(script_path)
         installed = self._get_installed()
-        # ===== 自动补充依赖关系 =====
-        if 'openpyxl' in used:
-            used.append('et_xmlfile')
-        if 'requests' in used:
-            used.append('urllib3')
-            used.append('certifi')
+        if hasattr(self, 'dep_closure_cb') and self.dep_closure_cb.isChecked():
+            try:
+                target_python = self.python_path.currentText() or sys.executable
+                self.safe_log("🔗 正在递归解析传递依赖...")
+                closure = self._expand_dependency_closure(target_python, used)
+                used = list(set(used + list(closure)))
+                self.safe_log(f"✅ 传递依赖展开完成，共 {len(used)} 个包")
+            except Exception as e:
+                self.safe_log(f"⚠️ 传递依赖展开失败: {e}")
+        else:
+            if 'openpyxl' in used:
+                used.append('et_xmlfile')
+            if 'requests' in used:
+                used.append('urllib3')
+                used.append('certifi')
         missing = []
         for mod in used:
             if mod in STANDARD_LIBS:
@@ -16155,6 +15969,8 @@ class PackageMainWindow(QMainWindow):
             used.append('urllib3')
             used.append('certifi')
         missing = self._analyze_missing(script)
+        # ===== 过滤不需要安装的模块 =====
+        missing = [m for m in missing if m not in NEVER_PACK]
         self.safe_log(f"📦 使用模块: {', '.join(used) if used else '无'}")
         for mod in used:
             if mod not in self.hidden_imports_list:
@@ -16169,6 +15985,7 @@ class PackageMainWindow(QMainWindow):
     def _batch_install(self, modules):
         # 获取目标Python解释器（从config或当前环境）
         target_python = getattr(self, '_last_target_python', sys.executable)
+        use_uv = self.uv_mode.isChecked() if hasattr(self, 'uv_mode') else False
         for mod in modules:
             # 获取正确的包名
             pkg = MODULE_TO_PACKAGE.get(mod, mod)
@@ -16633,12 +16450,6 @@ class PackageMainWindow(QMainWindow):
         if found == 0 and skipped == 0:
             self.safe_log("💡 提示：支持的数据文件类型: " + ', '.join(sorted(data_exts)))
 
-    def _scan_and_add_resources(self, script_dir):
-        """扫描并添加资源文件到 data_files"""
-        resource_exts = {'.ico', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg',
-                    '.txt', '.json', '.xml', '.yaml', '.yml', '.conf', '.ini', '.cfg'}
-        pass
-
     def _update_data_count(self):
         """更新依赖数据按钮旁边的数字（数据文件数量）"""
         count = len(self.data_files_list)
@@ -16749,8 +16560,12 @@ class PackageMainWindow(QMainWindow):
     # ==================== 虚拟环境 ====================
 
     def _on_venv_switch(self, state):
+        """虚拟环境开关"""
         self.use_venv = state == Qt.CheckState.Checked.value
         script = self.input_file.text()
+        packer = self.packer_combo.currentText()
+        current_backend = self.nuitka_backend_combo.currentText() if hasattr(self, 'nuitka_backend_combo') else 'auto'
+        need_zig = (packer == "Nuitka" and current_backend == "zig")
         if self.use_venv:
             self.safe_log("🐍 已启用虚拟环境")
             exe_dir = get_exe_directory()
@@ -16762,7 +16577,6 @@ class PackageMainWindow(QMainWindow):
                 venv_python = os.path.join(venv_dir, "bin", "python")
                 py_ver = sys.version_info
                 venv_site = os.path.join(venv_dir, "lib", f"python{py_ver.major}.{py_ver.minor}", "site-packages")
-            # 清理环境变量
             python_env_keys = [
                 'PYTHONPATH', 'PYTHONHOME', 'PYTHONNOUSERSITE',
                 'PYTHONSAFEPATH', 'PYTHONSTARTUP', 'PYTHONEXECUTABLE',
@@ -16782,7 +16596,6 @@ class PackageMainWindow(QMainWindow):
                         cache_data = self._load_project_cache()
                         if cache_data:
                             self._restore_from_project_cache(cache_data, script, self.app_name.text() or os.path.splitext(os.path.basename(script))[0])
-                            #self.safe_log(f"✅ 从缓存恢复虚拟环境配置")
                         else:
                             self._last_analyzed_file = None
                             self._last_analyzed_time = 0
@@ -16797,7 +16610,14 @@ class PackageMainWindow(QMainWindow):
                                     self.extra_deps,
                                     getattr(self, 'uses_tkinter', False)
                                 ))
-                            #self.safe_log(f"✅ 已为虚拟环境生成新缓存")
+                    if need_zig:
+                        env_id = self._get_python_env_id(venv_python)
+                        zig_venvs = self._cached_zig_venvs if hasattr(self, '_cached_zig_venvs') else {}
+                        if env_id in zig_venvs and zig_venvs[env_id].get('has_zig', False):
+                            self.safe_log(f"ℹ️ zig_venvs[{env_id}] 缓存命中")
+                        else:
+                            self._detect_and_save_zig(venv_python)
+                        QTimer.singleShot(0, self._display_compiler_status)
                 else:
                     self._create_venv_sync(venv_dir, venv_python)
             threading.Thread(target=check_and_switch, daemon=True).start()
@@ -16809,7 +16629,6 @@ class PackageMainWindow(QMainWindow):
                     cache_data = self._load_project_cache()
                     if cache_data:
                         self._restore_from_project_cache(cache_data, script, self.app_name.text() or os.path.splitext(os.path.basename(script))[0])
-                        #self.safe_log(f"✅ 从缓存恢复主环境配置")
                     else:
                         self._last_analyzed_file = None
                         self._last_analyzed_time = 0
@@ -16824,7 +16643,16 @@ class PackageMainWindow(QMainWindow):
                                 self.extra_deps,
                                 getattr(self, 'uses_tkinter', False)
                             ))
-                        #self.safe_log(f"✅ 已为主环境生成新缓存")
+                if need_zig:
+                    current_python = self.python_path.currentText()
+                    if current_python and os.path.exists(current_python):
+                        env_id = self._get_python_env_id(current_python)
+                        zig_venvs = self._cached_zig_venvs if hasattr(self, '_cached_zig_venvs') else {}
+                        if env_id in zig_venvs and zig_venvs[env_id].get('has_zig', False):
+                            self.safe_log(f"ℹ️ zig_venvs[{env_id}] 缓存命中")
+                        else:
+                            self._detect_and_save_zig(current_python)
+                        QTimer.singleShot(0, self._display_compiler_status)
             QTimer.singleShot(10, disable_and_refresh)
             self.venv_pkg_count_label.setText("")
             if 'VIRTUAL_ENV' in os.environ:
@@ -16870,25 +16698,6 @@ class PackageMainWindow(QMainWindow):
         except Exception as e:
             pass
             #self.safe_log(f"⚠️ 缓存虚拟环境状态失败: {e}")
-
-    def _check_venv_valid(self, venv_dir):
-        """检查虚拟环境是否完整有效"""
-        if sys.platform == 'win32':
-            venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
-        else:
-            venv_python = os.path.join(venv_dir, "bin", "python")
-        if not os.path.exists(venv_python):
-            return False
-        try:
-            result = subprocess.run(
-                [venv_python, '-c', 'print("ok")'],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0 and 'ok' in result.stdout:
-                return True
-        except:
-            pass
-        return False
 
     def _do_enable_venv(self):
         exe_dir = get_exe_directory()
@@ -16949,9 +16758,10 @@ class PackageMainWindow(QMainWindow):
             cache = load_cache()
             cache['venv_enabled'] = False
             save_cache(cache)
-            self.safe_log("💾 虚拟环境状态已清除")
+            #self.safe_log("💾 虚拟环境状态已清除")
         except Exception as e:
-            self.safe_log(f"⚠️ 清除虚拟环境状态失败: {e}")
+            pass
+            #self.safe_log(f"⚠️ 清除虚拟环境状态失败: {e}")
 
     def _restore_previous_python(self):
         """取消虚拟时，切换到下拉列表中第一个非虚拟环境的Python"""
@@ -16972,69 +16782,6 @@ class PackageMainWindow(QMainWindow):
         if self.python_path.count() > 0:
             self.python_path.setCurrentIndex(0)
             self.safe_log("🐍 已切换到第一个Python")
-
-    def _restore_system_python(self):
-        """恢复使用系统Python（关闭虚拟环境时调用）"""
-        try:
-            # 获取系统Python路径
-            system_python = sys.executable
-            # 如果是打包模式，查找系统Python
-            if getattr(sys, 'frozen', False):
-                system_python = self._find_system_python() or sys.executable
-            # 如果当前选中的是虚拟环境Python，切换到系统Python
-            current_py = self.python_path.currentText()
-            venv_dir = os.path.join(get_exe_directory(), "common_venv")
-            if sys.platform == 'win32':
-                venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
-            else:
-                venv_python = os.path.join(venv_dir, "bin", "python")
-            # 如果当前选中的是虚拟环境Python，切换到系统Python
-            if current_py and current_py == self._format_path(venv_python):
-                # 查找系统Python在列表中的位置
-                display_path = self._format_path(system_python)
-                idx = self.python_path.findText(display_path)
-                if idx >= 0:
-                    self.python_path.setCurrentIndex(idx)
-                else:
-                    # 如果不在列表中，添加并选中
-                    self.python_path.addItem(display_path)
-                    self.python_path.setCurrentText(display_path)
-                # 更新版本信息
-                try:
-                    result = self._run_hidden(
-                        [system_python, '--version'],
-                        capture_output=True, text=True,
-                        startupinfo=get_startupinfo()
-                    )
-                    ver = result.stdout.strip() or result.stderr.strip()
-                    if ver:
-                        self.python_version.setText(ver)
-                        self.status_python.setText(f"🐍 {ver}")
-                        self.safe_log(f"🐍 已切换回系统Python: {ver}")
-                except:
-                    pass
-            else:
-                if current_py and os.path.exists(current_py):
-                    try:
-                        result = self._run_hidden(
-                            [current_py, '--version'],
-                            capture_output=True, text=True,
-                            startupinfo=get_startupinfo()
-                        )
-                        ver = result.stdout.strip() or result.stderr.strip()
-                        if ver:
-                            self.python_version.setText(ver)
-                            self.status_python.setText(f"🐍 {ver}")
-                    except:
-                        pass
-        except Exception as e:
-            self.safe_log(f"⚠️ 恢复系统Python失败: {e}")
-
-    def _auto_create_venv_for_script_async(self):
-        """异步调用自动创建虚拟环境"""
-        script = self.input_file.text()
-        if script and os.path.exists(script):
-            self._auto_create_venv_for_script(script)
 
     def _manage_venv(self):
         """管理虚拟环境"""
@@ -17110,18 +16857,6 @@ class PackageMainWindow(QMainWindow):
         except Exception as e:
             self.safe_log(f"❌ 管理失败: {e}")
             self.status_finish("失败")
-
-    def _do_manage_venv(self):
-        """管理虚拟环境"""
-        try:
-            venv_dir = os.path.join(self.current_dir, "common_venv")
-            script = self.input_file.text()
-            if not script or not os.path.exists(script):
-                return
-            self._do_manage_venv_common(venv_dir, script)
-        except Exception as e:
-            self.safe_log(f"❌ 管理失败: {e}")
-            self._venv_finish(False)
 
     def _on_venv_progress(self, value, text):
         """主线程中更新UI - 彩色版"""
@@ -17337,13 +17072,6 @@ class PackageMainWindow(QMainWindow):
             self.safe_log(f"❌ 异常: {e}")
             QMessageBox.critical(self, "错误", str(e))
 
-    def _normalize_exe_path(self, path):
-        """统一 exe 文件路径后缀为小写"""
-        if not path:
-            return path
-        import re
-        return re.sub(r'\.exe$', '.exe', path, flags=re.IGNORECASE)
-
     def _get_empty_lines_to_delete(self, content, lines):
         """获取需要删除的空行位置（优化版）"""
         try:
@@ -17358,15 +17086,6 @@ class PackageMainWindow(QMainWindow):
             if idx not in empty_cache:
                 empty_cache[idx] = idx < len(lines) and not lines[idx].strip()
             return empty_cache[idx]
-
-        def is_if_main(node):
-            if not isinstance(node, ast.If):
-                return False
-            if isinstance(node.test, ast.Compare):
-                if (isinstance(node.test.left, ast.Name) and
-                        node.test.left.id == '__name__'):
-                    return True
-            return False
 
         def collect_deletions_for_items(items, is_module=False):
             """检查一个语句列表，返回需要删除的空行"""
@@ -17581,14 +17300,6 @@ class PackageMainWindow(QMainWindow):
             elif isinstance(stmt, ast.With):
                 return "with 语句"
             return type(stmt).__name__
-
-        def is_if_main(node):
-            if not isinstance(node, ast.If):
-                return False
-            if isinstance(node.test, ast.Compare):
-                if (isinstance(node.test.left, ast.Name) and node.test.left.id == '__name__'):
-                    return True
-            return False
         # ===== 检查顶层块之间的空行 =====
         top_blocks = []
         for node in tree.body:
@@ -17695,34 +17406,9 @@ class PackageMainWindow(QMainWindow):
                         check_body_items(handler_body, f'except(行{handler.lineno})', 'except块')
         return errors, warnings
 
-    def _extract_block_name(self, stripped_line):
-        """从行文本中提取函数/类名称"""
-        if stripped_line.startswith('class '):
-            # class MyClass(Base): -> MyClass
-            name = stripped_line[6:].split('(')[0].split(':')[0].strip()
-            return name
-        elif stripped_line.startswith('def ') or stripped_line.startswith('async def '):
-            # def my_func(args): -> my_func
-            # async def my_func(args): -> my_func
-            start = stripped_line.find('def ') + 4
-            name = stripped_line[start:].split('(')[0].strip()
-            return name
-        elif stripped_line.startswith('if '):
-            return '__main__'
-        return 'unknown'
-
     def _check_body_empty_lines(self, tree, lines):
         """检查所有代码块内部的空行（递归AST）"""
         errors = []
-
-        def is_if_main(node):
-            if not isinstance(node, ast.If):
-                return False
-            if isinstance(node.test, ast.Compare):
-                if (isinstance(node.test.left, ast.Name) and
-                        node.test.left.id == '__name__'):
-                    return True
-            return False
 
         def get_stmt_desc(stmt):
             """获取语句描述（与 _get_stmt_desc 保持一致）"""
@@ -17879,30 +17565,9 @@ class PackageMainWindow(QMainWindow):
         else:
             return type(stmt).__name__
 
-    def _get_real_special_lines(self, content):
-        """用AST获取真正的特殊块行号集合"""
-        try:
-            tree = ast.parse(content)
-        except SyntaxError:
-            return set()
-        real_lines = set()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                real_lines.add(node.lineno)
-            elif isinstance(node, ast.If):
-                if self._is_if_main(node):
-                    real_lines.add(node.lineno)
-        return real_lines
-
     def _is_if_main(self, node):
         """检查是否是 if __name__ == '__main__':"""
-        if not isinstance(node, ast.If):
-            return False
-        if isinstance(node.test, ast.Compare):
-            if (isinstance(node.test.left, ast.Name) and
-                    node.test.left.id == '__name__'):
-                return True
-        return False
+        return is_if_main(node)
 
     def _is_really_empty(self, line):
         """检查一行是否只包含空白/隐藏字符"""
@@ -17915,85 +17580,6 @@ class PackageMainWindow(QMainWindow):
             if char not in '\u200B\u200C\u200D\uFEFF':
                 return False
         return True
-
-    def _auto_fix_formatting(self, file_path):
-        """自动修复格式问题"""
-        self._auto_fix_indentation(file_path)
-        with open(file_path, 'r', encoding='utf-8-sig') as f:
-            original_content = f.read()
-            lines = original_content.split('\n')
-        original_count = len(lines)
-        changes = []
-        # 获取需要删除的空行
-        delete_empty_lines = self._get_empty_lines_to_delete(original_content, lines)
-        # 获取需要插入空行的位置
-        need_insert_lines = self._get_need_insert_lines(original_content, lines)
-        result = []
-        for i, line in enumerate(lines):
-            line_no = i + 1
-            stripped = line.strip()
-            # 删除多余空行
-            if self._is_really_empty(line) and line_no in delete_empty_lines:
-                changes.append(f"删除第{line_no}行空行")
-                continue
-            # 插入缺少的空行（在特殊块前面插入）
-            if line_no in need_insert_lines and result and result[-1] != '':
-                result.append('')
-                changes.append(f"在第{line_no}行前插入空行")
-            result.append(line.rstrip('\n'))
-        # Tab转空格
-        result = [line.replace('\t', '    ') for line in result]
-        new_content = '\n'.join(result)
-        new_count = len(result)
-        self._backup_file(file_path)
-        with open(file_path, 'w', encoding='utf-8-sig') as f:
-            f.write(new_content)
-        self.safe_log(f"   ✅ 已修复: {original_count} → {new_count}")
-        return original_content, new_content, changes
-
-    def _preview_fix_changes(self, file_path):
-        with open(file_path, 'r', encoding='utf-8-sig') as f:
-            content = f.read()
-            lines = content.split('\n')
-        original_count = len(lines)
-        changes = []
-        delete_empty_lines = self._get_empty_lines_to_delete(content, lines)
-        need_empty_before = set()
-        try:
-            tree = ast.parse(content)
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Module):
-                    for i in range(1, len(node.body)):
-                        next_stmt = node.body[i]
-                        if isinstance(next_stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                            need_empty_before.add(next_stmt.lineno)
-                        elif self._is_if_main(next_stmt):
-                            need_empty_before.add(next_stmt.lineno)
-        except SyntaxError:
-            pass
-        result = []
-        for i, line in enumerate(lines):
-            line_no = i + 1
-            stripped = line.strip()
-            if self._is_really_empty(line) and line_no in delete_empty_lines:
-                changes.append(f"第{line_no}行: 删除多余空行")
-                continue
-            is_special = False
-            # 按优先级判断特殊块
-            if stripped.startswith('if __name__'):
-                is_special = True
-            elif stripped.startswith('def main') or stripped.startswith('async def main'):
-                is_special = True
-            elif stripped.startswith('class '):
-                is_special = True
-            elif stripped.startswith('def ') or stripped.startswith('async def '):
-                is_special = True
-            if is_special and line_no in need_empty_before and result and result[-1] != '':
-                result.append('')
-                changes.append(f"在函数/类前插入空行")
-            result.append(line.rstrip('\n'))
-        new_count = len(result)
-        return changes, result
 
     def _auto_fix_indentation(self, file_path):
         """修复缩进：Tab转空格，保持缩进级别不变"""
@@ -18031,7 +17617,6 @@ class PackageMainWindow(QMainWindow):
 
     def _backup_file(self, file_path):
         """备份文件"""
-        import shutil
         backup_path = f"{os.path.splitext(file_path)[0]}.bak.py"
         shutil.copy2(file_path, backup_path)
         self.safe_log(f"📦 已备份: {os.path.basename(backup_path)}")
@@ -18039,8 +17624,6 @@ class PackageMainWindow(QMainWindow):
 
     def _restore_backup(self, file_path=None):
         """从备份恢复文件"""
-        import shutil
-        import os
         from PyQt6.QtWidgets import QMessageBox
         if file_path is None:
             file_path = self.input_file.text()
@@ -18059,60 +17642,6 @@ class PackageMainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "错误", f"恢复失败: {e}")
             return False
-
-    def _get_ast_special_blocks(self, content):
-        """用AST获取所有真正的特殊块，按父节点分组"""
-        try:
-            tree = ast.parse(content)
-        except SyntaxError:
-            return {}
-        blocks = []
-        class Visitor(ast.NodeVisitor):
-            def __init__(self):
-                self.parent_id = id(tree)
-
-            def visit_FunctionDef(self, node):
-                end = getattr(node, 'end_lineno', node.lineno)
-                blocks.append((node.lineno, '函数', end, node.name, self.parent_id))
-                old = self.parent_id
-                self.parent_id = id(node)
-                self.generic_visit(node)
-                self.parent_id = old
-
-            def visit_AsyncFunctionDef(self, node):
-                end = getattr(node, 'end_lineno', node.lineno)
-                blocks.append((node.lineno, '异步函数', end, node.name, self.parent_id))
-                old = self.parent_id
-                self.parent_id = id(node)
-                self.generic_visit(node)
-                self.parent_id = old
-
-            def visit_ClassDef(self, node):
-                end = getattr(node, 'end_lineno', node.lineno)
-                blocks.append((node.lineno, '类', end, node.name, self.parent_id))
-                old = self.parent_id
-                self.parent_id = id(node)
-                self.generic_visit(node)
-                self.parent_id = old
-
-            def visit_If(self, node):
-                is_main = False
-                if isinstance(node.test, ast.Compare):
-                    if (isinstance(node.test.left, ast.Name) and
-                            node.test.left.id == '__name__'):
-                        is_main = True
-                if is_main:
-                    end = getattr(node, 'end_lineno', node.lineno)
-                    blocks.append((node.lineno, 'if块', end, '__main__', self.parent_id))
-                self.generic_visit(node)
-        Visitor().visit(tree)
-        from collections import defaultdict
-        groups = defaultdict(list)
-        for lineno, typ, end, name, parent_id in blocks:
-            groups[parent_id].append((lineno, typ, end, name))
-        for parent_id in groups:
-            groups[parent_id].sort(key=lambda x: x[0])
-        return groups
 
     def _reorganize_class_functions(self, file_path):
         """将类中的函数按关键词分组排列特殊关键词映射：pack 和 package 视为同一类"""
@@ -18314,7 +17843,6 @@ class PackageMainWindow(QMainWindow):
             self.safe_log(f"✅ 已按关键词分组排列类内函数（缩进保留）")
             return True, "\n".join(changes)
         except Exception as e:
-            import traceback
             error_msg = f"整理失败: {e}\n{traceback.format_exc()}"
             self.safe_log(error_msg)
             return False, error_msg
@@ -18492,7 +18020,6 @@ class PackageMainWindow(QMainWindow):
             ))
         except Exception as e:
             self.safe_log(f"❌ 语法检查异常: {e}")
-            import traceback
             self.safe_log(traceback.format_exc())
             QMessageBox.critical(self, "错误", f"语法检查出错:\n{e}")
 
@@ -18806,7 +18333,6 @@ class PackageMainWindow(QMainWindow):
                 with open(backup_path, 'w', encoding='utf-8-sig') as f:
                     f.writelines(lines)
             # 解析函数名列表（支持逗号、分号、换行分隔）
-            import re
             func_list = re.split(r'[,;\n]+', function_names)
             func_list = [f.strip() for f in func_list if f.strip()]
             if not func_list:
@@ -18904,20 +18430,8 @@ class PackageMainWindow(QMainWindow):
     # ==================== 预估大小 ====================
 
     def _format_size(self, size):
-        """格式化大小显示"""
-        try:
-            if size <= 0:
-                return "0 B"
-            if size < 1024:
-                return f"{int(size)} B"
-            elif size < 1024 * 1024:
-                return f"{size / 1024:.0f} KB"
-            elif size < 1024 * 1024 * 1024:
-                return f"{size / (1024 * 1024):.2f} MB"
-            else:
-                return f"{size / (1024 * 1024 * 1024):.3f} GB"
-        except Exception:
-            return "0 B"
+        """格式化大小显示（简洁版）"""
+        return format_size(size)
 
     def _get_dir_size(self, path, keep_cache=False):
         """计算目录实际大小（递归）"""
@@ -19072,7 +18586,6 @@ class PackageMainWindow(QMainWindow):
 
     def _estimate_size(self):
         self._clear_log()
-        import random, json, os
         try:
             f = self.input_file.text()
             if not f or not os.path.exists(f):
@@ -19534,20 +19047,6 @@ class PackageMainWindow(QMainWindow):
             vol_h = max(12, int(h * 0.05))
             self.full_volume.setFixedHeight(vol_h)
 
-    def _init_qt_player(self):
-        """初始化 QMediaPlayer"""
-        from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-        self._player = QMediaPlayer(self)
-        self._audio_output = QAudioOutput(self)
-        self._player.setAudioOutput(self._audio_output)
-        self._audio_output.setVolume(0.7)
-        if getattr(self, 'video_widget', None):
-            self._player.setVideoOutput(self.video_widget)
-        self._player.positionChanged.connect(self._update_progress)
-        self._player.durationChanged.connect(self._update_duration)
-        self._player.mediaStatusChanged.connect(self._on_media_status_changed)
-        self._player.errorOccurred.connect(self._on_player_error)
-
     def _update_progress(self, pos):
         """更新进度条"""
         if getattr(self, '_duration', 0) > 0 and getattr(self, 'full_progress', None):
@@ -19556,12 +19055,6 @@ class PackageMainWindow(QMainWindow):
     def _update_duration(self, duration):
         """更新总时长"""
         self._duration = duration
-
-    def _seek_position(self):
-        """拖动进度条跳转"""
-        if getattr(self, '_player', None) and getattr(self, '_duration', 0) > 0:
-            pos = int(self.full_progress.value() / 1000 * self._duration)
-            self._player.setPosition(pos)
 
     def _set_volume(self, val):
         """设置音量"""
@@ -19605,7 +19098,6 @@ class PackageMainWindow(QMainWindow):
         if not self.music_files:
             self.safe_log("⚠️ 未找到音视频文件")
             return
-        import random
         random.shuffle(self.music_files)
         self.current_music_index = 0
         self.safe_log(f"🎵 已加载 {len(self.music_files)} 个文件")
@@ -19792,7 +19284,6 @@ class PackageMainWindow(QMainWindow):
                         proj_name = self.app_name.text() or os.path.splitext(os.path.basename(script))[0]
                         proj_dir = os.path.join(self.output_dir.text(), proj_name)
                         if os.path.exists(proj_dir):
-                            import glob
                             for f in glob.glob(os.path.join(proj_dir, '*.spec')):
                                 try: os.remove(f)
                                 except: pass
@@ -19830,20 +19321,11 @@ class PackageMainWindow(QMainWindow):
             self.use_response_file_cb.blockSignals(False)
             self._cleanup_worker()
 
-    def _hide_progress(self):
-        """隐藏进度条"""
-        self.progress_container.setVisible(False)
-        self.placeholder_widget.setVisible(True)
-        self.progress_bar.setVisible(False)
-        self.progress_label.setText("")
-        self.time_label.setText("⏰ 00:00")
-
     def _kill_mingw_processes(self):
         """清理残留的 MinGW 编译器进程"""
         try:
             if sys.platform != 'win32':
                 return
-            import psutil
             killed = 0
             proc_names = ['c1.exe', 'cc1.exe', 'cc1plus.exe', 'gcc.exe', 'g++.exe', 'as.exe']
             for proc in psutil.process_iter(['pid', 'name']):
@@ -19935,30 +19417,6 @@ class PackageMainWindow(QMainWindow):
         except Exception as e:
             self.safe_log(f"⚠️ 检查exe失败: {e}")
             return None
-
-    def _check_exe_generated(self):
-        """检查exe是否已生成"""
-        try:
-            script = self.input_file.text()
-            if not script:
-                return False
-            project_name = os.path.splitext(os.path.basename(script))[0]
-            output_dir = self.output_dir.text()
-            possible_paths = [
-                os.path.join(output_dir, f'{project_name}.exe'),
-                os.path.join(output_dir, project_name, f'{project_name}.exe'),
-                os.path.join(os.path.dirname(script), 'dist', f'{project_name}.exe'),
-                os.path.join(os.path.dirname(script), 'dist', project_name, f'{project_name}.exe'),
-            ]
-            for path in possible_paths:
-                if os.path.exists(path):
-                    size = os.path.getsize(path)
-                    if size > 100000:  # 大于100KB
-                        #self.safe_log(f"📁 找到生成的exe: {path} ({size / 1024:.1f} KB)")
-                        return True
-            return False
-        except:
-            return False
 
     def _stop_build(self):
         """停止打包"""
@@ -20197,34 +19655,65 @@ class PackageMainWindow(QMainWindow):
     def _save_cache(self):
         """保存缓存（closeEvent 调用）"""
         try:
-            old_cache = {}
+            cache = {}
             if os.path.exists(self.global_cache_file):
                 try:
                     with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
-                        old_cache = json.load(f)
+                        cache = json.load(f)
                 except:
                     pass
-            cache = {}
-            # ===== 保留 upx 字段 =====
-            if old_cache.get('upx'):
-                cache['upx'] = old_cache['upx']
+            # ===== 保存 zig_pip_envs（关键） =====
+            cache['zig_pip_envs'] = getattr(self, '_cached_zig_pip_envs', {})
+            cache['zig_system'] = {
+                'has_zig': getattr(self, '_cached_zig_system', False),
+                'path': getattr(self, '_cached_zig_system_path', ''),
+                'version': getattr(self, '_cached_zig_system_version', ''),
+            }
+            # 如果当前环境有 zig，确保记录到 zig_pip_envs
+            if self._cached_has_zig and self._cached_zig_type in ['pip', 'pip_module']:
+                python_exe = self.python_path.currentText() or sys.executable
+                env_id = self._get_python_env_id(python_exe)
+                if 'zig_pip_envs' not in cache:
+                    cache['zig_pip_envs'] = {}
+                cache['zig_pip_envs'][env_id] = {
+                    'has_zig': True,
+                    'path': self._cached_zig_path,
+                    'version': self._cached_zig_version
+                }
+            # Python 列表
             if self.python_path and self.python_path.count() > 0:
+                cache['python_list'] = [self.python_path.itemText(i) for i in range(self.python_path.count())]
+                cache['python_types'] = self._python_types_cache if hasattr(self, '_python_types_cache') else {}
                 cache['python'] = {
                     'path': self.python_path.currentText() if self.python_path else '',
                     'version': self.python_version.text() if self.python_version else '',
                     'time': time.time()
                 }
-                cache['python_list'] = [self.python_path.itemText(i) for i in range(self.python_path.count())]
-                cache['python_types'] = self._python_types_cache if hasattr(self, '_python_types_cache') else {}
-            if self._cached_has_msvc or self._cached_has_mingw:
-                cache['compiler'] = {
-                    'msvc': self._cached_has_msvc,
-                    'mingw': self._cached_has_mingw,
-                    'msvc_path': self._cached_msvc_path,
-                    'mingw_path': self._cached_mingw_path,
-                    'msvc_version': self._cached_msvc_version,
-                    'mingw_version': self._cached_mingw_version,
-                }
+            # 编译器信息
+            compiler = {}
+            if self._cached_has_msvc:
+                compiler['msvc'] = self._cached_has_msvc
+                compiler['msvc_path'] = self._cached_msvc_path
+                compiler['msvc_version'] = self._cached_msvc_version
+            if self._cached_has_mingw:
+                compiler['mingw'] = self._cached_has_mingw
+                compiler['mingw_path'] = self._cached_mingw_path
+                compiler['mingw_version'] = self._cached_mingw_version
+            if self._cached_has_zig:
+                compiler['zig'] = self._cached_has_zig
+                compiler['zig_path'] = self._cached_zig_path
+                compiler['zig_version'] = self._cached_zig_version
+            if self._cached_has_clang:
+                compiler['clang'] = self._cached_has_clang
+                compiler['clang_path'] = self._cached_clang_path
+                compiler['clang_version'] = self._cached_clang_version
+            if compiler:
+                cache['compiler'] = compiler
+            # 虚拟环境状态
+            if hasattr(self, 'venv_mode'):
+                cache['venv_enabled'] = self.venv_mode.isChecked()
+                cache['use_venv'] = self.use_venv
+            # Rust
             if self._cached_has_cargo or self._cached_has_rustc:
                 cache['rust_compiler'] = {
                     'has_cargo': self._cached_has_cargo,
@@ -20233,32 +19722,36 @@ class PackageMainWindow(QMainWindow):
                     'rustc_path': self._cached_rustc_path,
                     'rust_version': self._cached_rust_version,
                 }
+            # NSIS
             if self._cached_has_nsis:
                 cache['nsis'] = {
                     'has_nsis': self._cached_has_nsis,
                     'nsis_path': self._cached_nsis_path,
                     'nsis_version': self._cached_nsis_version,
                 }
+            # 打包器版本
             if self._packer_versions_cache:
                 cache['packer_versions'] = self._packer_versions_cache
-            # ===== 添加空值检查 =====
-            if hasattr(self, 'nuitka_backend_combo') and self.nuitka_backend_combo is not None:
+            # 后端选择
+            if hasattr(self, 'nuitka_backend_combo') and self.nuitka_backend_combo:
                 cache['compiler_backend'] = self.nuitka_backend_combo.currentText()
-            else:
-                cache['compiler_backend'] = 'auto'
+            # 主题
             cache['theme_index'] = self.current_theme_idx
-            if not cache:
-                return
-            temp_file = self.global_cache_file + '.tmp'
-            with open(temp_file, 'w', encoding='utf-8-sig') as f:
-                json.dump(cache, f, ensure_ascii=False, indent=2)
-            os.replace(temp_file, self.global_cache_file)
+            # UPX
+            if self.upx_path and self.upx_path.text():
+                upx_path = self.upx_path.text()
+                if os.path.exists(upx_path):
+                    cache['upx'] = {'path': upx_path}
+            if cache:
+                temp_file = self.global_cache_file + '.tmp'
+                with open(temp_file, 'w', encoding='utf-8-sig') as f:
+                    json.dump(cache, f, ensure_ascii=False, indent=2)
+                os.replace(temp_file, self.global_cache_file)
         except Exception as e:
-            pass  
+            pass
 
     def _cleanup_all_processes(self):
         """清理所有后台进程和线程"""
-        import psutil
         import gc
         # ===== 1. 停止打包 worker =====
         if hasattr(self, 'worker') and self.worker is not None:
@@ -20267,7 +19760,6 @@ class PackageMainWindow(QMainWindow):
                 if hasattr(self.worker, 'process') and self.worker.process:
                     try:
                         self.worker.process.terminate()
-                        import time
                         time.sleep(0.3)
                         if self.worker.process.poll() is None:
                             self.worker.process.kill()
@@ -20314,9 +19806,6 @@ class PackageMainWindow(QMainWindow):
     def _kill_multi_instances(self):
         """批量结束多开的程序 + 清理临时残留"""
         from PyQt6.QtWidgets import QInputDialog
-        import tempfile
-        import glob
-        import shutil
         # 弹出输入框
         process_name, ok = QInputDialog.getText(
             self, "结束多开程序",
@@ -20403,22 +19892,6 @@ class PackageMainWindow(QMainWindow):
         else:
             show_msg(self, "提示", f"没有找到其他 {process_name} 进程\n也没有临时残留需要清理",1)
 
-    def _get_base_path(self):
-        """兼容 PyInstaller 和 Nuitka (--onefile / --onedir)"""
-        if getattr(sys, 'frozen', False):
-            # 1. PyInstaller 标准路径
-            if hasattr(sys, '_MEIPASS'):
-                return sys._MEIPASS
-            # 2. Nuitka --onefile 模式
-            nuitka_temp = os.environ.get('NUITKA_ONEFILE_TEMP')
-            if nuitka_temp and os.path.exists(nuitka_temp):
-                return nuitka_temp
-            if hasattr(sys, '__compiled__'):        
-                pass
-            return os.path.dirname(sys.executable)
-        else:
-            return os.path.dirname(os.path.abspath(__file__))
-
     def _get_icon_path(self):
         """获取图标路径（优先外部，其次内部）"""
         exe_dir = os.path.dirname(sys.executable)
@@ -20468,7 +19941,6 @@ class PackageMainWindow(QMainWindow):
 
         def prepare():
             try:
-                import time
                 # 先等待界面完全加载
                 time.sleep(3)
                 exe_dir = get_exe_directory()
@@ -20489,12 +19961,6 @@ class PackageMainWindow(QMainWindow):
 
     def _create_venv_sync(self, venv_dir, venv_python):
         """创建虚拟环境，升级pip，安装打包器，写入缓存，加入列表"""
-        import subprocess
-        import shutil
-        import json
-        import os
-        import time
-        import glob
         # 1. 使用界面选中的Python
         system_python = self.python_path.currentText()
         if not system_python or not os.path.exists(system_python):
@@ -20523,7 +19989,13 @@ class PackageMainWindow(QMainWindow):
             if os.path.exists(dst):
                 shutil.rmtree(dst, ignore_errors=True)
             shutil.copytree(src, dst)
-            self.safe_log("📦 已复制 DLLs 目录")
+            #self.safe_log("📦 已复制 DLLs 目录")
+        src = os.path.join(system_dir, 'libs')
+        dst = os.path.join(venv_dir, 'libs')
+        if os.path.exists(src):
+            if os.path.exists(dst):
+                shutil.rmtree(dst, ignore_errors=True)
+            shutil.copytree(src, dst)
         # ===== 4. 补全 tcl 目录 =====
         src = os.path.join(system_dir, 'tcl')
         dst = os.path.join(venv_dir, 'tcl')
@@ -20531,15 +20003,15 @@ class PackageMainWindow(QMainWindow):
             if os.path.exists(dst):
                 shutil.rmtree(dst, ignore_errors=True)
             shutil.copytree(src, dst)
-            self.safe_log("📦 已复制 tcl 目录")
-        # ===== 5. 补全 Include 目录 =====
-        src = os.path.join(system_dir, 'Include')
-        dst = os.path.join(venv_dir, 'Include')
+            #self.safe_log("📦 已复制 tcl 目录")
+        # ===== 5. 补全 include 目录 =====
+        src = os.path.join(system_dir, 'include')
+        dst = os.path.join(venv_dir, 'include')
         if os.path.exists(src):
             if os.path.exists(dst):
                 shutil.rmtree(dst, ignore_errors=True)
             shutil.copytree(src, dst)
-            self.safe_log("📦 已复制 Include 目录")
+            #self.safe_log("📦 已复制 include 目录")
         # 7. 升级pip
         subprocess.run(
             [venv_python, "-m", "pip", "install", "--upgrade", "pip", "-q"],
@@ -20704,93 +20176,6 @@ class PackageMainWindow(QMainWindow):
         if skipped:
             self.safe_log(f"⏭️ 跳过: {', '.join(skipped)}")
 
-    def _check_packer_install_status(self, venv_python):
-        """检查打包器安装状态"""
-        import subprocess
-        check = subprocess.run(
-            [venv_python, '-m', 'pip', 'show', 'pyinstaller'],
-            capture_output=True, text=True,
-            timeout=5
-        )
-        if check.returncode == 0:
-            # 安装完成
-            self.safe_log("✅ 打包器安装完成")
-            self.progress_bar.setValue(100)
-            self.progress_label.setText("100% - 环境就绪")
-            self.status_finish("就绪")
-            self._packer_install_check_timer.stop()
-            QTimer.singleShot(1000, lambda: self.progress_container.setVisible(False))
-
-    def _silent_install_packers(self, venv_python):
-        """后台静默安装打包器，安装完成后写入缓存"""
-        import subprocess
-        packers = [
-            'pyinstaller',
-            'nuitka',
-            'pyapp',
-            'py2exe',
-            'cx-freeze',
-            'pynsist',
-            'pyoxidizer',
-            'py2app',
-        ]
-        self._packers_installing = True
-        clean_env = {'PATH': os.environ.get('PATH', '')}
-        if sys.platform == 'win32':
-            clean_env['SYSTEMROOT'] = os.environ.get('SYSTEMROOT', '')
-        for pkg in packers:
-            check = subprocess.run(
-                [venv_python, '-m', 'pip', 'show', pkg],
-                capture_output=True, text=True,
-                env=clean_env,
-                timeout=5
-            )
-            if check.returncode == 0:
-                continue
-            pip_install(venv_python, pkg, env=clean_env, quiet=True, timeout=300)
-        self._packers_installing = False
-        self._packers_installed = True
-        packer_versions = {}
-        for pkg in packers:
-            show = subprocess.run(
-                [venv_python, '-m', 'pip', 'show', pkg],
-                capture_output=True, text=True,
-                env=clean_env,
-                timeout=5
-            )
-            if show.returncode == 0:
-                version = ''
-                for line in show.stdout.split('\n'):
-                    if line.startswith('Version:'):
-                        version = line.split(':', 1)[1].strip()
-                        break
-                # 映射为界面显示的名称
-                display_name = {
-                    'pyinstaller': 'PyInstaller',
-                    'nuitka': 'Nuitka',
-                    'pyapp': 'PyApp',
-                    'py2exe': 'Py2exe',
-                    'cx-freeze': 'Cx_Freeze',
-                    'pynsist': 'Pynsist',
-                    'pyoxidizer': 'PyOxidizer',
-                    'py2app': 'Py2app',
-                }.get(pkg, pkg)
-                packer_versions[f"{display_name}@{venv_python}"] = version
-        # 写入 global_cache.json
-        if packer_versions:
-            try:
-                cache = {}
-                if os.path.exists(self.global_cache_file):
-                    with open(self.global_cache_file, 'r', encoding='utf-8-sig') as f:
-                        cache = json.load(f)
-                if 'packer_versions' not in cache:
-                    cache['packer_versions'] = {}
-                cache['packer_versions'].update(packer_versions)
-                with open(self.global_cache_file, 'w', encoding='utf-8-sig') as f:
-                    json.dump(cache, f, ensure_ascii=False, indent=2)
-            except:
-                pass
-
     def _on_venv_created(self, venv_python):
         """虚拟环境创建完成（主线程）"""
         display_path = self._format_path(venv_python)
@@ -20800,10 +20185,6 @@ class PackageMainWindow(QMainWindow):
             self.python_path.setCurrentText(display_path)
             self._on_python_selected()
         self.status_finish("就绪")
-
-    def _on_environment_ready(self):
-        """环境准备完成"""
-        self.status_label.setText("✅ 环境就绪")
 
     def _install_missing_deps_with_progress(self, python_exe, script_path):
         """利用 InstallDepsThread 异步安装缺失依赖，状态栏显示进度"""
@@ -20831,7 +20212,6 @@ class PackageMainWindow(QMainWindow):
         if not python_exe or not os.path.exists(python_exe):
             self.safe_log("❌ 没有有效的Python")
             return
-        import subprocess
         # 分析依赖
         self._analyze_used(script_path, auto_add=False)
         needed_modules = self.analyzed_modules
@@ -20866,10 +20246,6 @@ class PackageMainWindow(QMainWindow):
 
     def _copy_package_from_system(self, venv_python, pkg_name, system_python=None):
         """从系统Python拷贝包到虚拟环境（pip install 失败时兜底）"""
-        import shutil
-        import subprocess
-        import os
-        import re
         if not system_python:
             system_python = self.python_path.currentText()
             if not system_python or not os.path.exists(system_python):
@@ -20959,11 +20335,6 @@ class PackageMainWindow(QMainWindow):
 
     def _clean_venv_packages(self, venv_python):
         """清理虚拟环境：包数量超过阈值时，询问用户是否清理"""
-        import subprocess
-        import json
-        import threading
-        import shutil
-        import os
 
         def clean():
             try:
@@ -21092,7 +20463,6 @@ class PackageMainWindow(QMainWindow):
             if not os.path.exists(venv_python):
                 self.venv_pkg_count_label.setText("0")
                 return
-            import subprocess
             clean_env = {
                 'PATH': os.environ.get('PATH', ''),
                 'SYSTEMROOT': os.environ.get('SYSTEMROOT', ''),
@@ -21145,7 +20515,6 @@ class PackageMainWindow(QMainWindow):
         if ext:
             ext = ext.replace(' ', '')
         name = name.strip()
-        import re
         name = re.sub(r'\s+', '_', name)
         new_name = name + ext
         script_dir = os.path.dirname(file_path)
@@ -21165,9 +20534,6 @@ class PackageMainWindow(QMainWindow):
             return file_path
 
 def main():
-    import time
-    import traceback
-    import os
     try:
         patch_subprocess_hide_window()
         _stderr_devnull = open(os.devnull, 'w')
@@ -21188,8 +20554,6 @@ def main():
         current_lower = APP_BASE_PATH.lower().replace('/', '\\')
         if any(m in current_lower for m in temp_markers):
             APP_BASE_PATH = os.path.dirname(os.path.abspath(sys.argv[0]))
-            print(f"[Main] 路径已修正: {APP_BASE_PATH}")
-        print(f"[Main] APP_BASE_PATH: {APP_BASE_PATH}")
         def global_exception_handler(exc_type, exc_value, exc_tb):
             error_msg = f"程序崩溃:\n类型: {exc_type.__name__}\n消息: {exc_value}\n"
             error_msg += "".join(traceback.format_tb(exc_tb))
